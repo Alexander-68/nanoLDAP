@@ -1,0 +1,78 @@
+{{define "groups.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NanoLDAP Groups</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/htmx.min.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <div id="groups-panel">{{template "groups_panel.html" .}}</div>
+  </main>
+</body>
+</html>
+{{end}}
+
+{{define "groups_panel.html"}}
+<section class="header">
+  <div>
+    <div class="brand">NanoLDAP</div>
+    <h1>Groups</h1>
+    <p class="small">Base DN: <code>{{.BaseDN}}</code></p>
+  </div>
+  <div class="nav">
+    <a class="button secondary" href="/users">Users</a>
+    <form method="post" action="/logout">
+      <button class="button secondary" type="submit">Logout {{.CurrentUser.Username}}</button>
+    </form>
+  </div>
+</section>
+
+{{if .Error}}<div class="message">{{.Error}}</div>{{end}}
+
+<section class="card panel stack" style="margin-bottom:1rem;">
+  <h2>Create Group</h2>
+  <form class="grid-2" hx-post="/groups" hx-target="#groups-panel" hx-swap="outerHTML">
+    <label>Name
+      <input name="name" required>
+    </label>
+    <label>Description
+      <input name="description">
+    </label>
+    <button type="submit">Create Group</button>
+  </form>
+</section>
+
+<section class="card panel">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Members</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Groups}}
+      <tr>
+        <td><code>{{.Name}}</code></td>
+        <td>
+          {{range .MemberUIDs}}<span class="pill">{{.}}</span>{{end}}
+        </td>
+        <td>
+          <form class="stack" hx-put="/groups/{{.ID}}" hx-target="#groups-panel" hx-swap="outerHTML">
+            <input type="text" name="name" value="{{.Name}}">
+            <input type="text" name="description" value="{{.Description}}">
+            <button type="submit">Save</button>
+            <button class="button danger" hx-delete="/groups/{{.ID}}" hx-target="#groups-panel" hx-swap="outerHTML" type="button">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

@@ -1,0 +1,33 @@
+{{define "login.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NanoLDAP Login</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section class="card panel hero stack">
+      <div>
+        <div class="brand">NanoLDAP</div>
+        <h1>Administrative Login</h1>
+        <p class="small">The web UI is restricted to members of the <code>admins</code> group.</p>
+      </div>
+      {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
+      <form class="stack" method="post" action="/login">
+        <label>Username
+          <input name="username" autocomplete="username" required>
+        </label>
+        <label>Password
+          <input type="password" name="password" autocomplete="current-password" required>
+        </label>
+        <button type="submit">Sign In</button>
+      </form>
+      <p class="small">Download the current self-signed certificate at <a href="/ca.crt">/ca.crt</a>.</p>
+    </section>
+  </main>
+</body>
+</html>
+{{end}}

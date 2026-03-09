@@ -1,0 +1,110 @@
+{{define "users.html"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NanoLDAP Users</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/htmx.min.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <div id="users-panel">{{template "users_panel.html" .}}</div>
+  </main>
+</body>
+</html>
+{{end}}
+
+{{define "users_panel.html"}}
+<section class="header">
+  <div>
+    <div class="brand">NanoLDAP</div>
+    <h1>Users</h1>
+    <p class="small">Base DN: <code>{{.BaseDN}}</code></p>
+  </div>
+  <div class="nav">
+    <a class="button secondary" href="/groups">Groups</a>
+    <form method="post" action="/logout">
+      <button class="button secondary" type="submit">Logout {{.CurrentUser.Username}}</button>
+    </form>
+  </div>
+</section>
+
+{{if .Error}}<div class="message">{{.Error}}</div>{{end}}
+
+<section class="card panel stack" style="margin-bottom:1rem;">
+  <h2>Create User</h2>
+  <form class="stack" hx-post="/users" hx-target="#users-panel" hx-swap="outerHTML">
+    <div class="grid-2">
+      <label>Username
+        <input name="username" required>
+      </label>
+      <label>Display name
+        <input name="display_name">
+      </label>
+      <label>Password
+        <input type="password" name="password" required>
+      </label>
+      <label>Disabled
+        <input type="checkbox" name="disabled">
+      </label>
+    </div>
+    <div class="checkboxes">
+      {{range .Groups}}
+      <label><input type="checkbox" name="group" value="{{.Name}}"> {{.Name}}</label>
+      {{end}}
+    </div>
+    <button type="submit">Create User</button>
+  </form>
+</section>
+
+<section class="card panel">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Summary</th>
+        <th>Edit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Users}}
+      <tr>
+        <td><code>{{.Username}}</code></td>
+        <td>
+          <div class="stack">
+            <div>{{.DisplayName}}</div>
+            <div>
+              {{range .Groups}}<span class="pill">{{.Name}}</span>{{end}}
+            </div>
+            <div class="small">{{if .Disabled}}Disabled{{else}}Active{{end}}</div>
+          </div>
+        </td>
+        <td>
+          {{$user := .}}
+          <form class="stack" hx-put="/users/{{.ID}}" hx-target="#users-panel" hx-swap="outerHTML">
+            <label>Display name
+              <input type="text" name="display_name" value="{{.DisplayName}}">
+            </label>
+            <div class="checkboxes">
+              {{range $.Groups}}
+              <label><input type="checkbox" name="group" value="{{.Name}}" {{if userInGroup $user .Name}}checked{{end}}> {{.Name}}</label>
+              {{end}}
+            </div>
+            <label><input type="checkbox" name="disabled" {{if .Disabled}}checked{{end}}> Disabled</label>
+            <label>Password
+              <input type="password" name="password" placeholder="Leave blank to keep">
+            </label>
+            <div class="nav">
+              <button type="submit">Save</button>
+              <button class="button danger" hx-delete="/users/{{.ID}}" hx-target="#users-panel" hx-swap="outerHTML" type="button">Delete</button>
+            </div>
+          </form>
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

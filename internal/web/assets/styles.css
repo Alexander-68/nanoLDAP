@@ -1,0 +1,172 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background:
+    radial-gradient(circle at top left, rgba(215, 244, 255, 0.9), transparent 30%),
+    linear-gradient(180deg, #f4efe2 0%, #fffdfa 100%);
+  color: #172126;
+}
+
+a {
+  color: #045f73;
+}
+
+.shell {
+  min-height: 100vh;
+  padding: 2rem;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(14, 59, 72, 0.12);
+  border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(15, 49, 60, 0.12);
+  backdrop-filter: blur(10px);
+}
+
+.stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.grid-2 {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.nav {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.brand {
+  font-family: "IBM Plex Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.9rem;
+  color: #0f5667;
+}
+
+.panel {
+  padding: 1.5rem;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 0.6rem;
+  border-bottom: 1px solid rgba(14, 59, 72, 0.12);
+  vertical-align: top;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: #e2f3f7;
+  color: #0f5667;
+  margin: 0.1rem;
+  font-size: 0.8rem;
+}
+
+.button,
+button {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 0.7rem 1rem;
+  background: #0f5667;
+  color: white;
+  cursor: pointer;
+  font: inherit;
+}
+
+.button.secondary {
+  background: #eef2f3;
+  color: #172126;
+}
+
+.button.danger {
+  background: #9d3e2b;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: 0.7rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid rgba(14, 59, 72, 0.18);
+  background: white;
+  font: inherit;
+}
+
+label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.92rem;
+}
+
+.checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.checkboxes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.checkboxes input {
+  width: auto;
+}
+
+.message {
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: #ffefe9;
+  border: 1px solid rgba(157, 62, 43, 0.2);
+  color: #7b2314;
+}
+
+.hero {
+  max-width: 440px;
+  margin: 5rem auto;
+}
+
+.small {
+  color: #526166;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    padding: 1rem;
+  }
+
+  .table {
+    display: block;
+    overflow-x: auto;
+  }
+}
