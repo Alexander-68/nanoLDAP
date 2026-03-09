@@ -21,7 +21,7 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 		AuditLog:           filepath.Join(t.TempDir(), "audit.log"),
 		LDAPIdleTimeout:    time.Second,
 		LDAPBindWindow:     10 * time.Second,
-		LDAPBindLimit:      3,
+		LDAPBindLimit:      10,
 		LDAPSearchRate:     50,
 		LDAPMaxConnections: 16,
 	})
@@ -44,6 +44,34 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	}
 	if !bytes.Contains(responses.entries[0].children[1].content, []byte("namingContexts")) && !containsAttribute(responses.entries[0], "namingcontexts") {
 		t.Fatalf("Root DSE response missing namingContexts attribute")
+	}
+
+	connAll := dialLDAP(t, addr)
+	defer connAll.Close()
+	readerAll := bufio.NewReader(connAll)
+	writeLDAP(t, connAll, bindRequest(30, "", ""))
+	_ = readLDAPPacket(t, readerAll)
+	writeLDAP(t, connAll, searchRequestPacketWithAttributes(31, "", scopeBaseObject, presentFilterPacket("objectClass"), "ALL"))
+	allResponses := readLDAPSearchResponses(t, readerAll)
+	if len(allResponses.entries) != 1 {
+		t.Fatalf("anonymous Root DSE ALL entries = %d; want 1", len(allResponses.entries))
+	}
+	if !containsAttribute(allResponses.entries[0], "namingcontexts") {
+		t.Fatalf("Root DSE ALL response missing namingContexts attribute")
+	}
+
+	connSubtree := dialLDAP(t, addr)
+	defer connSubtree.Close()
+	readerSubtree := bufio.NewReader(connSubtree)
+	writeLDAP(t, connSubtree, bindRequest(32, "", ""))
+	_ = readLDAPPacket(t, readerSubtree)
+	writeLDAP(t, connSubtree, searchRequestPacket(33, "", scopeSubtree, presentFilterPacket("objectClass")))
+	subtreeResponses := readLDAPSearchResponses(t, readerSubtree)
+	if len(subtreeResponses.entries) != 1 {
+		t.Fatalf("anonymous Root DSE subtree entries = %d; want 1", len(subtreeResponses.entries))
+	}
+	if !containsAttribute(subtreeResponses.entries[0], "namingcontexts") {
+		t.Fatalf("Root DSE subtree response missing namingContexts attribute")
 	}
 
 	conn2 := dialLDAP(t, addr)
@@ -198,6 +226,14 @@ func bindRequest(messageID int, dn, password string) []byte {
 }
 
 func searchRequestPacket(messageID int, baseDN string, scope int, filter []byte) []byte {
+	return searchRequestPacketWithAttributes(messageID, baseDN, scope, filter)
+}
+
+func searchRequestPacketWithAttributes(messageID int, baseDN string, scope int, filter []byte, attributes ...string) []byte {
+	var attributePackets [][]byte
+	for _, attribute := range attributes {
+		attributePackets = append(attributePackets, berOctetString(attribute))
+	}
 	return berMessage(messageID, berApplication(3, bytesJoin([][]byte{
 		berOctetString(baseDN),
 		berEnumerated(scope),
@@ -206,7 +242,7 @@ func searchRequestPacket(messageID int, baseDN string, scope int, filter []byte)
 		berInteger(0),
 		berBoolean(false),
 		filter,
-		berSequence(),
+		berSequence(attributePackets...),
 	})))
 }
 

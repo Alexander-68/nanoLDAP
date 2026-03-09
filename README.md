@@ -4,7 +4,7 @@ NanoLDAP is a minimal, self-contained LDAP/LDAPS server with an embedded HTTP/HT
 
 ## Features
 
-- Read-only LDAP and LDAPS listeners with anonymous Root DSE access, simple bind, scoped search, mutation rejection, per-IP bind throttling, per-connection search throttling, idle connection expiry, and a global concurrent connection cap.
+- Read-only LDAP and LDAPS listeners with anonymous Root DSE access, simple bind, scoped search, mutation rejection, per-IP bind throttling, per-connection search throttling, idle connection expiry, and a global concurrent connection cap. Root DSE searches return `namingContexts` for normal all-attributes requests including `*` and `ALL`, and anonymous empty-base subtree searches are accepted as a compatibility alias for Root DSE lookups.
 - HTTP and HTTPS administration UI built with `net/http`, `html/template`, bundled `htmx.min.js`, and locally served CSS. Any listener whose port is explicitly configured is considered valid for direct use.
 - Argon2id password hashing in PHC format, secure in-memory sessions with `Secure`, `HttpOnly`, `SameSite=Strict` cookies, a global 3-session limit, 15-minute idle expiry, and per-user session revocation.
 - SQLite-backed user/group CRUD with default first-run provisioning for `admins`, `mvradmins`, `users`, and `guests` plus `admin`, `mvradmin`, `user`, and `guest` seed accounts.

@@ -229,7 +229,7 @@ func (s *Server) handleSearch(ctx context.Context, state *connState, msg ldapMes
 
 	var responses [][]byte
 	if !state.bound || state.anonymous {
-		if request.baseDN != "" || request.scope != scopeBaseObject {
+		if !isAnonymousRootDSERequest(request) {
 			return berMessage(msg.id, resultPacket(5, resultInsufficientAccessRights, "", "anonymous access is restricted to Root DSE"))
 		}
 		responses = append(responses, berMessage(msg.id, searchEntryPacket(rootDSE(s.cfg.BaseDN), request.attributes)))
@@ -365,7 +365,7 @@ func searchEntryPacket(entry directoryEntry, requested []string) []byte {
 }
 
 func selectedAttributes(attrs map[string][]string, requested []string) map[string][]string {
-	if len(requested) == 0 || slices.Contains(requested, "*") {
+	if len(requested) == 0 || requestsAllAttributes(requested) {
 		return attrs
 	}
 	if slices.Contains(requested, "1.1") {
@@ -379,6 +379,20 @@ func selectedAttributes(attrs map[string][]string, requested []string) map[strin
 		}
 	}
 	return selected
+}
+
+func isAnonymousRootDSERequest(request searchRequest) bool {
+	return request.baseDN == "" && (request.scope == scopeBaseObject || request.scope == scopeSubtree)
+}
+
+func requestsAllAttributes(requested []string) bool {
+	for _, name := range requested {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "*", "all":
+			return true
+		}
+	}
+	return false
 }
 
 func rootDSE(baseDN string) directoryEntry {
