@@ -66,8 +66,9 @@ type searchRequest struct {
 }
 
 type directoryEntry struct {
-	dn    string
-	attrs map[string][]string
+	dn               string
+	attrs            map[string][]string
+	operationalAttrs map[string]struct{}
 }
 
 type rateCounter struct {
@@ -348,7 +349,7 @@ func resultPacket(appTag, resultCode int, matchedDN, diagnostic string) []byte {
 
 func searchEntryPacket(entry directoryEntry, requested []string) []byte {
 	var attributes [][]byte
-	for name, values := range selectedAttributes(entry.attrs, requested) {
+	for name, values := range selectedAttributes(entry, requested) {
 		var setValues [][]byte
 		for _, value := range values {
 			setValues = append(setValues, berOctetString(value))
@@ -364,17 +365,45 @@ func searchEntryPacket(entry directoryEntry, requested []string) []byte {
 	}))
 }
 
-func selectedAttributes(attrs map[string][]string, requested []string) map[string][]string {
-	if len(requested) == 0 || requestsAllAttributes(requested) {
-		return attrs
-	}
+func selectedAttributes(entry directoryEntry, requested []string) map[string][]string {
 	if slices.Contains(requested, "1.1") {
 		return map[string][]string{}
 	}
+
+	if len(requested) == 0 {
+		return entry.attrs
+	}
+
+	includeUserAttrs := requestsAllUserAttributes(requested)
+	includeOperationalAttrs := requestsAllOperationalAttributes(requested)
+	if includeUserAttrs && includeOperationalAttrs {
+		return entry.attrs
+	}
+
 	selected := make(map[string][]string)
 	for _, name := range requested {
 		name = strings.ToLower(name)
-		if values, ok := attrs[name]; ok {
+		switch name {
+		case "*", "+", "all":
+			continue
+		}
+		if values, ok := entry.attrs[name]; ok {
+			selected[name] = values
+		}
+	}
+	if includeUserAttrs {
+		for name, values := range entry.attrs {
+			if isOperationalAttribute(entry, name) {
+				continue
+			}
+			selected[name] = values
+		}
+	}
+	if includeOperationalAttrs {
+		for name, values := range entry.attrs {
+			if !isOperationalAttribute(entry, name) {
+				continue
+			}
 			selected[name] = values
 		}
 	}
@@ -385,7 +414,7 @@ func isAnonymousRootDSERequest(request searchRequest) bool {
 	return request.baseDN == "" && (request.scope == scopeBaseObject || request.scope == scopeSubtree)
 }
 
-func requestsAllAttributes(requested []string) bool {
+func requestsAllUserAttributes(requested []string) bool {
 	for _, name := range requested {
 		switch strings.ToLower(strings.TrimSpace(name)) {
 		case "*", "all":
@@ -393,6 +422,21 @@ func requestsAllAttributes(requested []string) bool {
 		}
 	}
 	return false
+}
+
+func requestsAllOperationalAttributes(requested []string) bool {
+	for _, name := range requested {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "+", "all":
+			return true
+		}
+	}
+	return false
+}
+
+func isOperationalAttribute(entry directoryEntry, name string) bool {
+	_, ok := entry.operationalAttrs[strings.ToLower(name)]
+	return ok
 }
 
 func rootDSE(baseDN string) directoryEntry {
@@ -403,6 +447,11 @@ func rootDSE(baseDN string) directoryEntry {
 			"supportedldapversion": {"3"},
 			"vendorname":           {"NanoLDAP"},
 			"objectclass":          {"top"},
+		},
+		operationalAttrs: map[string]struct{}{
+			"namingcontexts":       {},
+			"supportedldapversion": {},
+			"vendorname":           {},
 		},
 	}
 }

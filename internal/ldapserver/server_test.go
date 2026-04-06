@@ -59,6 +59,26 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	if !containsAttribute(allResponses.entries[0], "namingcontexts") {
 		t.Fatalf("Root DSE ALL response missing namingContexts attribute")
 	}
+	if !containsAttribute(allResponses.entries[0], "objectclass") {
+		t.Fatalf("Root DSE ALL response missing objectClass attribute")
+	}
+
+	connStarPlus := dialLDAP(t, addr)
+	defer connStarPlus.Close()
+	readerStarPlus := bufio.NewReader(connStarPlus)
+	writeLDAP(t, connStarPlus, bindRequest(34, "", ""))
+	_ = readLDAPPacket(t, readerStarPlus)
+	writeLDAP(t, connStarPlus, searchRequestPacketWithAttributes(35, "", scopeBaseObject, presentFilterPacket("objectClass"), "*", "+"))
+	starPlusResponses := readLDAPSearchResponses(t, readerStarPlus)
+	if len(starPlusResponses.entries) != 1 {
+		t.Fatalf("anonymous Root DSE * + entries = %d; want 1", len(starPlusResponses.entries))
+	}
+	if !containsAttribute(starPlusResponses.entries[0], "namingcontexts") {
+		t.Fatalf("Root DSE * + response missing namingContexts attribute")
+	}
+	if !containsAttribute(starPlusResponses.entries[0], "objectclass") {
+		t.Fatalf("Root DSE * + response missing objectClass attribute")
+	}
 
 	connSubtree := dialLDAP(t, addr)
 	defer connSubtree.Close()
