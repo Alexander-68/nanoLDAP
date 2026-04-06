@@ -22,13 +22,28 @@ All listeners are opt-in. A port must be explicitly provided to enable that list
 
 If `--http-port` is specified, the admin UI is served over HTTP on that port. If `--https-port` is specified, the same UI is also served over HTTPS on that port.
 
+Unix-like shells:
+
 ```bash
-go run ./cmd/nanoldap \
-  --bind-addr 0.0.0.0 \
-  --http-port 8080 \
-  --https-port 8443 \
-  --ldap-port 1389 \
+go run ./cmd/nanoldap --bind-addr 0.0.0.0 --http-port 8080 --https-port 8443 --ldap-port 1389 --ldaps-port 1636
+```
+
+PowerShell:
+
+```powershell
+go run ./cmd/nanoldap `
+  --bind-addr 0.0.0.0 `
+  --http-port 8080 `
+  --https-port 8443 `
+  --ldap-port 1389 `
   --ldaps-port 1636
+```
+
+Built binary:
+
+```powershell
+go build -o .\nanoldap.exe .\cmd\nanoldap
+.\nanoldap.exe --bind-addr 0.0.0.0 --http-port 8080 --https-port 8443 --ldap-port 1389 --ldaps-port 1636
 ```
 
 Available flags:
@@ -81,7 +96,13 @@ Cross-platform PowerShell integration test:
 pwsh -NoLogo -NoProfile -File ./scripts/ldap_test.ps1
 ```
 
-On Linux, if `ldapsearch` is present, the PowerShell suite uses it for LDAP and LDAPS protocol queries in addition to the cross-platform checks. The LDAPS TLS handshake and certificate are validated separately first, because OpenLDAP `ldapsearch` does not consume NanoLDAP's self-signed leaf certificate as a trust anchor directly.
+If `ldapsearch` is installed, the PowerShell suite uses it for LDAP and LDAPS protocol queries in addition to the cross-platform checks. The script resolves `ldapsearch` from `PATH`, `$env:LDAPSEARCH`, the `-LdapsearchPath` parameter, and on Windows also checks `C:\OpenLDAP-2.6.9\bin\ldapsearch.exe`. The LDAPS TLS handshake and certificate are validated separately first, because OpenLDAP `ldapsearch` does not consume NanoLDAP's self-signed leaf certificate as a trust anchor directly.
+
+Windows check:
+
+```powershell
+& 'C:\OpenLDAP-2.6.9\bin\ldapsearch.exe' -VV
+```
 
 To run the PowerShell suite against an already-running instance:
 

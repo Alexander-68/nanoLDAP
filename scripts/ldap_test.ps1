@@ -8,6 +8,7 @@ param(
     [int]$LdapsPort = 1636,
     [string]$BaseDn = 'dc=example,dc=com',
     [string]$WorkingDirectory = (Get-Location).Path,
+    [string]$LdapsearchPath = '',
     [switch]$SkipServerStart
 )
 
@@ -126,6 +127,39 @@ function Start-NanoLDAP {
     }
 }
 
+function Get-LdapsearchExecutable {
+    $cachedCommand = Get-Variable -Name LdapsearchExecutable -Scope Script -ErrorAction SilentlyContinue
+    if ($cachedCommand -and $cachedCommand.Value) {
+        return $script:LdapsearchExecutable
+    }
+
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if ($LdapsearchPath) {
+        [void]$candidates.Add($LdapsearchPath)
+    }
+    if ($env:LDAPSEARCH) {
+        [void]$candidates.Add($env:LDAPSEARCH)
+    }
+    if ($IsWindows) {
+        [void]$candidates.Add('C:\OpenLDAP-2.6.9\bin\ldapsearch.exe')
+    }
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate)) {
+            $script:LdapsearchExecutable = (Resolve-Path -LiteralPath $candidate).Path
+            return $script:LdapsearchExecutable
+        }
+    }
+
+    try {
+        $script:LdapsearchExecutable = (Get-Command ldapsearch -ErrorAction Stop).Source
+        return $script:LdapsearchExecutable
+    }
+    catch {
+        return $null
+    }
+}
+
 function Stop-NanoLDAP {
     param([hashtable]$State)
 
@@ -153,6 +187,7 @@ function New-LdapTestConnection {
     $connection.AuthType = $AuthType
     $connection.Timeout = [TimeSpan]::FromSeconds(5)
     $connection.SessionOptions.ProtocolVersion = 3
+    $connection.SessionOptions.AutoReconnect = $false
 
     if ($UseSsl) {
         $connection.SessionOptions.SecureSocketLayer = $true
@@ -232,7 +267,10 @@ function Invoke-LdapsearchCommand {
         [switch]$SkipCertificateValidation
     )
 
-    $ldapsearch = Get-Command ldapsearch -ErrorAction Stop
+    $ldapsearch = Get-LdapsearchExecutable
+    if (-not $ldapsearch) {
+        throw 'ldapsearch was not found. Add it to PATH, set $env:LDAPSEARCH, or pass -LdapsearchPath.'
+    }
     $previousNoInit = $env:LDAPNOINIT
 
     try {
@@ -250,7 +288,7 @@ function Invoke-LdapsearchCommand {
             [void]$effectiveArguments.Add($argument)
         }
 
-        $output = & $ldapsearch.Source @effectiveArguments 2>&1 | Out-String
+        $output = & $ldapsearch @effectiveArguments 2>&1 | Out-String
         return @{
             ExitCode = $LASTEXITCODE
             Output   = $output
@@ -520,7 +558,7 @@ function Test-LdapEndpoints {
         $tcpClient.Dispose()
     }
 
-    if ($IsLinux -and (Get-Command ldapsearch -ErrorAction SilentlyContinue)) {
+    if (Get-LdapsearchExecutable) {
         Start-Sleep -Seconds 11
         Test-LdapsearchEndpoints -CaCertPath $CaCertPath
         return

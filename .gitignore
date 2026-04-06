@@ -1,4 +1,5 @@
-nanoldap
+/nanoldap
+/nanoldap.exe
 nanoldap.db
 audit.log
 cert.pem

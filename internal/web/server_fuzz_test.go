@@ -21,6 +21,9 @@ func FuzzSecureMux(f *testing.F) {
 	if err != nil {
 		f.Fatalf("store.Open() error = %v", err)
 	}
+	f.Cleanup(func() {
+		_ = dataStore.Close()
+	})
 	if err := dataStore.SeedDefaults(context.Background()); err != nil {
 		f.Fatalf("SeedDefaults() error = %v", err)
 	}
@@ -28,6 +31,9 @@ func FuzzSecureMux(f *testing.F) {
 	if err != nil {
 		f.Fatalf("audit.New() error = %v", err)
 	}
+	f.Cleanup(func() {
+		_ = auditLog.Close()
+	})
 	server := New(config.Config{
 		BaseDN:             "dc=example,dc=com",
 		SessionIdleTimeout: 15 * time.Minute,
