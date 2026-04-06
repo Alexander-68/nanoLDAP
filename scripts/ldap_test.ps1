@@ -313,9 +313,10 @@ function Test-LdapsearchProtocol {
     )
 
     $uri = "${Scheme}://${HostName}:$Port"
-    $userDn = "uid=user,ou=people,$BaseDn"
-    $adminDn = "uid=admin,ou=people,$BaseDn"
-    $guestDn = "uid=guest,ou=people,$BaseDn"
+    $userDn = "uid=user,$BaseDn"
+    $adminDn = "uid=admin,$BaseDn"
+    $guestDn = "uid=guest,$BaseDn"
+    $legacyUserDn = "uid=user,ou=people,$BaseDn"
 
     Write-Step "Testing $Name with ldapsearch"
 
@@ -347,8 +348,8 @@ function Test-LdapsearchProtocol {
         '-H', $uri,
         '-D', $userDn,
         '-w', 'user',
-        '-b', "ou=groups,$BaseDn",
-        "(|(member=$userDn)(uniqueMember=$userDn)(memberUid=user))",
+        '-b', $BaseDn,
+        "(|(member=$legacyUserDn)(uniqueMember=$legacyUserDn)(memberUid=user))",
         'cn'
     )
     Assert-True ($userSearch.ExitCode -eq 0) "$Name user group search failed: $($userSearch.Output)"
@@ -359,7 +360,7 @@ function Test-LdapsearchProtocol {
         '-H', $uri,
         '-D', $adminDn,
         '-w', 'admin',
-        '-b', "ou=people,$BaseDn",
+        '-b', $BaseDn,
         '(uid=guest)',
         'uid'
     )
@@ -371,7 +372,7 @@ function Test-LdapsearchProtocol {
         '-H', $uri,
         '-D', $guestDn,
         '-w', 'guest',
-        '-b', "ou=people,$BaseDn",
+        '-b', $BaseDn,
         '(uid=admin)',
         'uid'
     )
@@ -447,11 +448,11 @@ function Test-LdapEndpoints {
 
         Start-Sleep -Seconds 11
         Write-Step "Testing $($target.Name) authenticated and scoped searches"
-        $userCredential = [System.Net.NetworkCredential]::new("uid=user,ou=people,$BaseDn", 'user')
+        $userCredential = [System.Net.NetworkCredential]::new("uid=user,$BaseDn", 'user')
         $userConnection = New-LdapTestConnection -Port $target.Port -UseSsl $target.UseSsl -AuthType ([System.DirectoryServices.Protocols.AuthType]::Basic) -Credential $userCredential -ExpectedThumbprint $ExpectedThumbprint
         try {
             $userConnection.Bind()
-            $groupResponse = Invoke-LdapSearch -Connection $userConnection -Base "ou=groups,$BaseDn" -Filter "(|(member=uid=user,ou=people,$BaseDn)(uniqueMember=uid=user,ou=people,$BaseDn)(memberUid=user))" -Scope ([System.DirectoryServices.Protocols.SearchScope]::Subtree) -Attributes @('cn')
+            $groupResponse = Invoke-LdapSearch -Connection $userConnection -Base $BaseDn -Filter "(|(member=uid=user,ou=people,$BaseDn)(uniqueMember=uid=user,ou=people,$BaseDn)(memberUid=user))" -Scope ([System.DirectoryServices.Protocols.SearchScope]::Subtree) -Attributes @('cn')
             Assert-True ($groupResponse.Entries.Count -eq 1) "$($target.Name) user group search should return exactly one group."
             Assert-True ($groupResponse.Entries[0].Attributes['cn'][0] -eq 'users') "$($target.Name) user group search should resolve the users group."
         }
@@ -459,11 +460,11 @@ function Test-LdapEndpoints {
             $userConnection.Dispose()
         }
 
-        $adminCredential = [System.Net.NetworkCredential]::new("uid=admin,ou=people,$BaseDn", 'admin')
+        $adminCredential = [System.Net.NetworkCredential]::new("uid=admin,$BaseDn", 'admin')
         $adminConnection = New-LdapTestConnection -Port $target.Port -UseSsl $target.UseSsl -AuthType ([System.DirectoryServices.Protocols.AuthType]::Basic) -Credential $adminCredential -ExpectedThumbprint $ExpectedThumbprint
         try {
             $adminConnection.Bind()
-            $adminSearch = Invoke-LdapSearch -Connection $adminConnection -Base "ou=people,$BaseDn" -Filter '(uid=guest)' -Scope ([System.DirectoryServices.Protocols.SearchScope]::Subtree) -Attributes @('uid')
+            $adminSearch = Invoke-LdapSearch -Connection $adminConnection -Base $BaseDn -Filter '(uid=guest)' -Scope ([System.DirectoryServices.Protocols.SearchScope]::Subtree) -Attributes @('uid')
             Assert-True ($adminSearch.Entries.Count -eq 1) "$($target.Name) admin search should find guest."
             Assert-True ($adminSearch.Entries[0].Attributes['uid'][0] -eq 'guest') "$($target.Name) admin search result should be guest."
         }
@@ -471,11 +472,11 @@ function Test-LdapEndpoints {
             $adminConnection.Dispose()
         }
 
-        $guestCredential = [System.Net.NetworkCredential]::new("uid=guest,ou=people,$BaseDn", 'guest')
+        $guestCredential = [System.Net.NetworkCredential]::new("uid=guest,$BaseDn", 'guest')
         $guestConnection = New-LdapTestConnection -Port $target.Port -UseSsl $target.UseSsl -AuthType ([System.DirectoryServices.Protocols.AuthType]::Basic) -Credential $guestCredential -ExpectedThumbprint $ExpectedThumbprint
         try {
             $guestConnection.Bind()
-            $guestSearch = Invoke-LdapSearch -Connection $guestConnection -Base "ou=people,$BaseDn" -Filter '(uid=admin)' -Scope ([System.DirectoryServices.Protocols.SearchScope]::Subtree) -Attributes @('uid')
+            $guestSearch = Invoke-LdapSearch -Connection $guestConnection -Base $BaseDn -Filter '(uid=admin)' -Scope ([System.DirectoryServices.Protocols.SearchScope]::Subtree) -Attributes @('uid')
             Assert-True ($guestSearch.Entries.Count -eq 0) "$($target.Name) guest search for admin should return no entries."
         }
         finally {
@@ -505,7 +506,7 @@ function Test-LdapEndpoints {
         Start-Sleep -Seconds 11
         $fourthRateLimited = $false
         foreach ($attempt in 1..4) {
-            $badCredential = [System.Net.NetworkCredential]::new("uid=user,ou=people,$BaseDn", 'wrong')
+            $badCredential = [System.Net.NetworkCredential]::new("uid=user,$BaseDn", 'wrong')
             $badConnection = New-LdapTestConnection -Port $target.Port -UseSsl $target.UseSsl -AuthType ([System.DirectoryServices.Protocols.AuthType]::Basic) -Credential $badCredential -ExpectedThumbprint $ExpectedThumbprint
             try {
                 $badConnection.Bind()

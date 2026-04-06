@@ -100,7 +100,7 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	reader2 := bufio.NewReader(conn2)
 	writeLDAP(t, conn2, bindRequest(3, "", ""))
 	_ = readLDAPPacket(t, reader2)
-	writeLDAP(t, conn2, searchRequestPacket(4, "ou=people,dc=example,dc=com", scopeSubtree, presentFilterPacket("objectClass")))
+	writeLDAP(t, conn2, searchRequestPacket(4, peopleBaseDN("dc=example,dc=com"), scopeSubtree, presentFilterPacket("objectClass")))
 	restricted := readLDAPPacket(t, reader2)
 	if code := ldapResultCode(t, restricted); code != resultInsufficientAccessRights {
 		t.Fatalf("anonymous subtree result = %d; want %d", code, resultInsufficientAccessRights)
@@ -128,11 +128,11 @@ func TestScopedAndAdminSearches(t *testing.T) {
 		t.Fatalf("user bind result = %d; want success", code)
 	}
 	filter := orFilterPacket(
-		equalityFilterPacket("member", userDN("dc=example,dc=com", "user")),
-		equalityFilterPacket("uniqueMember", userDN("dc=example,dc=com", "user")),
+		equalityFilterPacket("member", legacyUserDN("dc=example,dc=com", "user")),
+		equalityFilterPacket("uniqueMember", legacyUserDN("dc=example,dc=com", "user")),
 		equalityFilterPacket("memberUid", "user"),
 	)
-	writeLDAP(t, userConn, searchRequestPacket(2, "ou=groups,dc=example,dc=com", scopeSubtree, filter))
+	writeLDAP(t, userConn, searchRequestPacket(2, "dc=example,dc=com", scopeSubtree, filter))
 	groupSearch := readLDAPSearchResponses(t, userReader)
 	if len(groupSearch.entries) != 1 || !entryHasDN(groupSearch.entries[0], groupDN("dc=example,dc=com", "users")) {
 		t.Fatalf("user group search returned %d entries; want only users", len(groupSearch.entries))
@@ -141,11 +141,11 @@ func TestScopedAndAdminSearches(t *testing.T) {
 	adminConn := dialLDAP(t, addr)
 	defer adminConn.Close()
 	adminReader := bufio.NewReader(adminConn)
-	writeLDAP(t, adminConn, bindRequest(3, userDN("dc=example,dc=com", "admin"), "admin"))
+	writeLDAP(t, adminConn, bindRequest(3, legacyUserDN("dc=example,dc=com", "admin"), "admin"))
 	if code := ldapResultCode(t, readLDAPPacket(t, adminReader)); code != resultSuccess {
 		t.Fatalf("admin bind result = %d; want success", code)
 	}
-	writeLDAP(t, adminConn, searchRequestPacket(4, "ou=people,dc=example,dc=com", scopeSubtree, equalityFilterPacket("uid", "guest")))
+	writeLDAP(t, adminConn, searchRequestPacket(4, peopleBaseDN("dc=example,dc=com"), scopeSubtree, equalityFilterPacket("uid", "guest")))
 	adminSearch := readLDAPSearchResponses(t, adminReader)
 	if len(adminSearch.entries) != 1 || !entryHasDN(adminSearch.entries[0], userDN("dc=example,dc=com", "guest")) {
 		t.Fatalf("admin search returned %d entries; want guest", len(adminSearch.entries))
@@ -156,7 +156,7 @@ func TestScopedAndAdminSearches(t *testing.T) {
 	guestReader := bufio.NewReader(guestConn)
 	writeLDAP(t, guestConn, bindRequest(5, userDN("dc=example,dc=com", "guest"), "guest"))
 	_ = readLDAPPacket(t, guestReader)
-	writeLDAP(t, guestConn, searchRequestPacket(6, "ou=people,dc=example,dc=com", scopeSubtree, equalityFilterPacket("uid", "admin")))
+	writeLDAP(t, guestConn, searchRequestPacket(6, "dc=example,dc=com", scopeSubtree, equalityFilterPacket("uid", "admin")))
 	guestSearch := readLDAPSearchResponses(t, guestReader)
 	if len(guestSearch.entries) != 0 {
 		t.Fatalf("guest search returned %d entries; want 0", len(guestSearch.entries))
@@ -231,10 +231,50 @@ func TestUpdatedBaseDNIsUsedAtRuntime(t *testing.T) {
 		t.Fatalf("bind with updated base DN result = %d; want success", code)
 	}
 
-	writeLDAP(t, conn, searchRequestPacket(2, "ou=people,dc=corp,dc=local", scopeSubtree, equalityFilterPacket("uid", "guest")))
+	writeLDAP(t, conn, searchRequestPacket(2, "dc=corp,dc=local", scopeSubtree, equalityFilterPacket("uid", "guest")))
 	responses := readLDAPSearchResponses(t, reader)
 	if len(responses.entries) != 1 || !entryHasDN(responses.entries[0], userDN("dc=corp,dc=local", "guest")) {
 		t.Fatalf("updated base DN search returned %d entries; want guest under dc=corp,dc=local", len(responses.entries))
+	}
+}
+
+func TestLegacyPeopleAndGroupsAliasesRemainQueryable(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, config.Config{
+		BaseDN:             "dc=example,dc=com",
+		DBPath:             filepath.Join(t.TempDir(), "test.db"),
+		AuditLog:           filepath.Join(t.TempDir(), "audit.log"),
+		LDAPIdleTimeout:    time.Second,
+		LDAPBindWindow:     10 * time.Second,
+		LDAPBindLimit:      10,
+		LDAPSearchRate:     50,
+		LDAPMaxConnections: 16,
+	})
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+
+	writeLDAP(t, conn, bindRequest(1, legacyUserDN("dc=example,dc=com", "user"), "user"))
+	if code := ldapResultCode(t, readLDAPPacket(t, reader)); code != resultSuccess {
+		t.Fatalf("legacy bind DN result = %d; want success", code)
+	}
+
+	legacyGroupFilter := orFilterPacket(
+		equalityFilterPacket("member", legacyUserDN("dc=example,dc=com", "user")),
+		equalityFilterPacket("uniqueMember", legacyUserDN("dc=example,dc=com", "user")),
+		equalityFilterPacket("memberUid", "user"),
+	)
+	writeLDAP(t, conn, searchRequestPacket(2, groupsBaseDN("dc=example,dc=com"), scopeSubtree, legacyGroupFilter))
+	groupResponses := readLDAPSearchResponses(t, reader)
+	if len(groupResponses.entries) != 1 || !entryHasDN(groupResponses.entries[0], groupDN("dc=example,dc=com", "users")) {
+		t.Fatalf("legacy group alias search returned %d entries; want users group", len(groupResponses.entries))
+	}
+
+	writeLDAP(t, conn, searchRequestPacket(3, peopleBaseDN("dc=example,dc=com"), scopeSubtree, equalityFilterPacket("uid", "user")))
+	userResponses := readLDAPSearchResponses(t, reader)
+	if len(userResponses.entries) != 1 || !entryHasDN(userResponses.entries[0], userDN("dc=example,dc=com", "user")) {
+		t.Fatalf("legacy people alias search returned %d entries; want user", len(userResponses.entries))
 	}
 }
 

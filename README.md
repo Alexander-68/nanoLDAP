@@ -82,10 +82,12 @@ Admins can update the effective Base DN from the web header on either page. Nano
 ## LDAP Layout
 
 - Base DN: configurable, default `dc=example,dc=com`
-- Users: `ou=people,<baseDN>`
-- Groups: `ou=groups,<baseDN>`
+- Users: `uid=<username>,<baseDN>`
+- Groups: `cn=<groupname>,<baseDN>`
 - User attributes: `objectClass=inetOrgPerson`, `uid`, `cn`, `displayName`, `memberOf`
 - Group attributes: `objectClass=groupOfNames`, `cn`, `member`, `uniqueMember`, `memberUid`
+
+NanoLDAP uses the flat user and group DNs above as the canonical layout. For compatibility, legacy user and group DNs under `ou=people,<baseDN>` and `ou=groups,<baseDN>` are still accepted for bind and subtree search matching.
 
 ## Testing
 

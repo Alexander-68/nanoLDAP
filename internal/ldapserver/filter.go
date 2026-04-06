@@ -88,8 +88,15 @@ func parseFilter(pkt packet) (Filter, error) {
 func matchesAttributeValue(attr, actual, wanted string) bool {
 	switch strings.ToLower(attr) {
 	case "member", "memberof", "uniquemember":
-		return normalizeDN(actual) == normalizeDN(wanted)
+		return normalizeComparableDN(actual) == normalizeComparableDN(wanted)
 	default:
 		return strings.EqualFold(actual, wanted)
 	}
+}
+
+func normalizeComparableDN(dn string) string {
+	normalized := normalizeDN(dn)
+	normalized = strings.Replace(normalized, ",ou=people,", ",", 1)
+	normalized = strings.Replace(normalized, ",ou=groups,", ",", 1)
+	return normalized
 }

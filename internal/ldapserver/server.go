@@ -69,6 +69,7 @@ type searchRequest struct {
 
 type directoryEntry struct {
 	dn               string
+	aliasDNs         []string
 	attrs            map[string][]string
 	operationalAttrs map[string]struct{}
 }
@@ -248,7 +249,7 @@ func (s *Server) handleSearch(ctx context.Context, state *connState, msg ldapMes
 		return berMessage(msg.id, resultPacket(5, resultBusy, "", "directory unavailable"))
 	}
 	for _, entry := range entries {
-		if !dnWithinScope(request.baseDN, request.scope, entry.dn) {
+		if !entryWithinScope(request.baseDN, request.scope, entry) {
 			continue
 		}
 		if request.filter != nil && !request.filter.Match(entry.attrs) {
@@ -487,7 +488,8 @@ func userEntry(user store.User, baseDN string) directoryEntry {
 		memberOf = append(memberOf, groupDN(baseDN, group.Name))
 	}
 	return directoryEntry{
-		dn: userDN(baseDN, user.Username),
+		dn:       userDN(baseDN, user.Username),
+		aliasDNs: []string{legacyUserDN(baseDN, user.Username)},
 		attrs: map[string][]string{
 			"objectclass":       {"inetOrgPerson"},
 			"uid":               {user.Username},
@@ -505,7 +507,8 @@ func groupEntry(group store.Group, baseDN string) directoryEntry {
 		members = append(members, userDN(baseDN, member))
 	}
 	return directoryEntry{
-		dn: groupDN(baseDN, group.Name),
+		dn:       groupDN(baseDN, group.Name),
+		aliasDNs: []string{legacyGroupDN(baseDN, group.Name)},
 		attrs: map[string][]string{
 			"objectclass":  {"groupOfNames"},
 			"cn":           {group.Name},
@@ -517,11 +520,11 @@ func groupEntry(group store.Group, baseDN string) directoryEntry {
 }
 
 func userDN(baseDN, username string) string {
-	return fmt.Sprintf("uid=%s,ou=people,%s", username, baseDN)
+	return fmt.Sprintf("uid=%s,%s", username, baseDN)
 }
 
 func groupDN(baseDN, name string) string {
-	return fmt.Sprintf("cn=%s,ou=groups,%s", name, baseDN)
+	return fmt.Sprintf("cn=%s,%s", name, baseDN)
 }
 
 func dnWithinScope(baseDN string, scope int, entryDN string) bool {
@@ -547,18 +550,48 @@ func parentDN(dn string) string {
 	return parts[1]
 }
 
+func legacyUserDN(baseDN, username string) string {
+	return fmt.Sprintf("uid=%s,%s", username, peopleBaseDN(baseDN))
+}
+
+func legacyGroupDN(baseDN, name string) string {
+	return fmt.Sprintf("cn=%s,%s", name, groupsBaseDN(baseDN))
+}
+
+func peopleBaseDN(baseDN string) string {
+	return "ou=people," + baseDN
+}
+
+func groupsBaseDN(baseDN string) string {
+	return "ou=groups," + baseDN
+}
+
 func usernameFromDN(baseDN, dn string) (string, bool) {
 	normalized := normalizeDN(dn)
-	suffix := ",ou=people," + normalizeDN(baseDN)
-	if !strings.HasSuffix(normalized, suffix) {
+	base := normalizeDN(baseDN)
+	var rdn string
+	switch {
+	case strings.HasSuffix(normalized, ",ou=people,"+base):
+		rdn = strings.TrimSuffix(normalized, ",ou=people,"+base)
+	case strings.HasSuffix(normalized, ","+base):
+		rdn = strings.TrimSuffix(normalized, ","+base)
+	default:
 		return "", false
 	}
-	rdn := strings.TrimSuffix(normalized, suffix)
 	parts := strings.SplitN(rdn, "=", 2)
 	if len(parts) != 2 || parts[0] != "uid" || parts[1] == "" {
 		return "", false
 	}
 	return parts[1], true
+}
+
+func entryWithinScope(baseDN string, scope int, entry directoryEntry) bool {
+	for _, candidateDN := range append([]string{entry.dn}, entry.aliasDNs...) {
+		if dnWithinScope(baseDN, scope, candidateDN) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeDN(dn string) string {

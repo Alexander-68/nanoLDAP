@@ -57,12 +57,13 @@ The system uses a flat relational SQLite database as the single source of truth,
 ### **4.2. LDAP DIT Mapping (Virtual Directory)**
 
 * **Base DN:** dc=example,dc=com (Configurable via CLI/Env)  
-* **Users:** Mounted at ou=people,dc=example,dc=com  
+* **Users:** Exposed directly under the base DN as uid={username},dc=example,dc=com  
   * **Attributes:** objectClass=inetOrgPerson, uid={username}, cn={username}, displayName={display\_name}  
   * **Derived Attribute:** memberOf (Calculated dynamically from user\_groups joins).  
-* **Groups:** Mounted at ou=groups,dc=example,dc=com  
+* **Groups:** Exposed directly under the base DN as cn={name},dc=example,dc=com  
   * **Attributes:** objectClass=groupOfNames, cn={name}  
-  * **Derived Attributes:** member (Calculated dynamically, listing full DNs of users in the group) AND memberUid (listing only the usernames, for legacy client compatibility).
+  * **Derived Attributes:** member (Calculated dynamically, listing full canonical DNs of users in the group) AND memberUid (listing only the usernames, for legacy client compatibility).  
+* **Compatibility Aliases:** Legacy user and group DNs under ou=people,dc=example,dc=com and ou=groups,dc=example,dc=com remain accepted for bind parsing and subtree search matching so older clients and scripts can keep working during migration.
 
 ## **5\. Component Specifications**
 
@@ -79,7 +80,7 @@ To drastically reduce complexity and increase security, the LDAP protocol is str
   * **Authenticated Bind:** Extracts the requested DN, parses the uid, looks up the user in SQLite, and compares the password using Argon2id. Checks if disabled \== false.  
   * Logs the result to the audit trail.  
 * **SearchRequest Handler:** Parses standard LDAP search filters (e.g., (&(objectClass=inetOrgPerson)(uid=alice))).  
-  * **Anonymous Search Restrictions:** Anonymous users are strictly limited to querying the Root DSE (Base Object search, empty base DN). Any attempt to search the main DIT (e.g., ou=people) returns an LDAPResultInsufficientAccessRights error. The Root DSE query returns server info like namingContexts, supportedLDAPVersion, etc.  
+  * **Anonymous Search Restrictions:** Anonymous users are strictly limited to querying the Root DSE (Base Object search, empty base DN). Any attempt to search the main DIT (e.g., dc=example,dc=com or compatibility aliases like ou=people,dc=example,dc=com) returns an LDAPResultInsufficientAccessRights error. The Root DSE query returns server info like namingContexts, supportedLDAPVersion, etc.  
   * **Authenticated Search Restrictions (Role-Based Scoping):** \* **Service Accounts / Admins:** If the bound user is a member of the admins or mvradmins groups, they are permitted to query the entire DIT. This accommodates standard third-party integrations (like Nextcloud or VPNs) that bind as a service account to look up other users.  
     * **Standard Users:** Standard users (users, guests) are restricted to searching **only** for their own identity and their group memberships. Searches for other users' data return an empty result or insufficient rights.  
 * **Mutation Rejection:** Any AddRequest, ModifyRequest, DeleteRequest, or ModifyDNRequest will immediately return an LDAPResultUnwillingToPerform error code.
@@ -160,7 +161,7 @@ An automated E2E test script (ldap\_test.ps1) must be maintained. It requires Po
 * **Protocol Coverage:** Execute all LDAP tests against both the cleartext LDAP port (e.g., 389\) and the LDAPS port (e.g., 636), ensuring the self-signed TLS certificate is properly trusted and verified when testing secure connections.  
 * **Lifecycle Limits:** Test connection drop after 5 seconds of inactivity. Test IP rate limit triggers after 4 bind attempts within 10 seconds.  
 * **Anonymous Bind & RootDSE:** Perform an anonymous bind and execute a Base-scoped search (objectClass=\*) against an empty base DN. Assert the retrieval of server info, particularly namingContexts.  
-* **Anonymous Search Restrictions:** Attempt a Subtree search (e.g., (objectClass=inetOrgPerson)) against ou=people,dc=example,dc=com as an anonymous user. Assert the server explicitly returns an LDAPResultInsufficientAccessRights exception.  
-* **Authenticated Bind:** Perform a Simple Bind using the default seeded users (e.g., uid=user,ou=people,dc=example,dc=com with password user). Assert successful authentication.  
-* **Scoped Search & Group Resolution:** Using the authenticated connection, query the groups DIT (ou=groups,...) with a complex filter designed to test standard directory compatibility: (|(member=uid=...)(uniqueMember=uid=...)(memberUid=...)). Assert that the server parses the filter correctly and returns **only** the groups to which the authenticated user is assigned (e.g., validating the users group is returned for the default user account).  
+* **Anonymous Search Restrictions:** Attempt a Subtree search (e.g., (objectClass=inetOrgPerson)) against dc=example,dc=com and against the compatibility alias ou=people,dc=example,dc=com as an anonymous user. Assert the server explicitly returns an LDAPResultInsufficientAccessRights exception.  
+* **Authenticated Bind:** Perform a Simple Bind using the default seeded users (e.g., uid=user,dc=example,dc=com with password user). Assert successful authentication. Add a compatibility case verifying uid=user,ou=people,dc=example,dc=com still binds successfully.  
+* **Scoped Search & Group Resolution:** Using the authenticated connection, query the flat directory base (dc=example,dc=com) with a complex filter designed to test standard directory compatibility: (|(member=uid=...)(uniqueMember=uid=...)(memberUid=...)). Assert that the server parses the filter correctly and returns **only** the groups to which the authenticated user is assigned (e.g., validating the users group is returned for the default user account). Add a compatibility case querying ou=groups,... with legacy member DNs.
 * **Service Account Search:** Bind as the admin account and perform a search for a different user (e.g., uid=guest). Assert that the query succeeds because admin bypasses the self-only restriction. Bind as guest and search for admin, asserting an empty result or insufficient rights.
