@@ -67,3 +67,32 @@ func TestStoreCRUD(t *testing.T) {
 		}
 	}
 }
+
+func TestStoreBaseDNSettingPersists(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	baseDN, err := store.EnsureBaseDN(ctx, "dc=example,dc=com")
+	if err != nil {
+		t.Fatalf("EnsureBaseDN() error = %v", err)
+	}
+	if baseDN != "dc=example,dc=com" {
+		t.Fatalf("EnsureBaseDN() = %q; want %q", baseDN, "dc=example,dc=com")
+	}
+
+	if err := store.SetBaseDN(ctx, "DC=corp, DC=local"); err != nil {
+		t.Fatalf("SetBaseDN() error = %v", err)
+	}
+
+	updated, err := store.BaseDN(ctx)
+	if err != nil {
+		t.Fatalf("BaseDN() error = %v", err)
+	}
+	if updated != "dc=corp,dc=local" {
+		t.Fatalf("BaseDN() = %q; want %q", updated, "dc=corp,dc=local")
+	}
+}

@@ -16,6 +16,7 @@ import (
 
 	internalapp "nanoldap/internal/app"
 	"nanoldap/internal/config"
+	"nanoldap/internal/httplog"
 	"nanoldap/internal/ldapserver"
 )
 
@@ -46,11 +47,13 @@ func run(stderr *os.File) error {
 		errCh     = make(chan error, 4)
 		shutdowns []func(context.Context) error
 	)
+	serverErrorLog := httplog.NewServerErrorLogger(stderr)
 
 	if cfg.HTTPPort > 0 {
 		server := &http.Server{
 			Addr:              cfg.Addr(cfg.HTTPPort),
 			Handler:           instance.PublicMux(),
+			ErrorLog:          serverErrorLog,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		if err := startHTTPServer(&wg, errCh, server, nil); err != nil {
@@ -64,6 +67,7 @@ func run(stderr *os.File) error {
 		server := &http.Server{
 			Addr:              cfg.Addr(cfg.HTTPSPort),
 			Handler:           instance.SecureMux(),
+			ErrorLog:          serverErrorLog,
 			ReadHeaderTimeout: 5 * time.Second,
 		}
 		if err := startHTTPServer(&wg, errCh, server, &tls.Config{
@@ -76,7 +80,7 @@ func run(stderr *os.File) error {
 		_, _ = fmt.Fprintf(stderr, "HTTPS listening on %s\n", server.Addr)
 	}
 
-	ldap := ldapserver.New(cfg, instance.Store(), instance.Audit())
+	ldap := ldapserver.New(cfg, instance.Settings(), instance.Store(), instance.Audit())
 
 	if cfg.LDAPPort > 0 {
 		listener, err := net.Listen("tcp", cfg.Addr(cfg.LDAPPort))

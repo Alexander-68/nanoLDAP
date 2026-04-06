@@ -13,6 +13,7 @@ import (
 
 	"nanoldap/internal/audit"
 	"nanoldap/internal/config"
+	"nanoldap/internal/directory"
 	"nanoldap/internal/session"
 	"nanoldap/internal/store"
 )
@@ -24,6 +25,7 @@ var assetsFS embed.FS
 
 type Server struct {
 	cfg       config.Config
+	settings  *directory.Settings
 	store     *store.Store
 	sessions  *session.Store
 	audit     *audit.Logger
@@ -38,18 +40,27 @@ type pageData struct {
 	Users       []store.User
 	Groups      []store.Group
 	BaseDN      string
+	View        string
 }
 
-func New(cfg config.Config, dataStore *store.Store, sessions *session.Store, auditLog *audit.Logger, certPEM []byte) *Server {
+func New(cfg config.Config, settings *directory.Settings, dataStore *store.Store, sessions *session.Store, auditLog *audit.Logger, certPEM []byte) *Server {
 	funcs := template.FuncMap{
 		"userInGroup": func(user store.User, name string) bool {
 			return store.IsMemberOf(user, name)
+		},
+		"groupNames": func(groups []store.Group) []string {
+			names := make([]string, 0, len(groups))
+			for _, group := range groups {
+				names = append(names, group.Name)
+			}
+			return names
 		},
 		"join": strings.Join,
 	}
 	templates := template.Must(template.New("all").Funcs(funcs).ParseFS(assetsFS, "templates/*.html"))
 	return &Server{
 		cfg:       cfg,
+		settings:  settings,
 		store:     dataStore,
 		sessions:  sessions,
 		audit:     auditLog,
@@ -89,6 +100,7 @@ func (s *Server) buildMux(secure bool) http.Handler {
 	mux.HandleFunc("POST /groups", s.withAdminAuth(s.handleCreateGroup))
 	mux.HandleFunc("PUT /groups/{id}", s.withAdminAuth(s.handleUpdateGroup))
 	mux.HandleFunc("DELETE /groups/{id}", s.withAdminAuth(s.handleDeleteGroup))
+	mux.HandleFunc("PUT /settings/base-dn", s.withAdminAuth(s.handleUpdateBaseDN))
 	return s.withHeaders(secure, mux)
 }
 
@@ -280,6 +292,22 @@ func (s *Server) handleDeleteGroup(w http.ResponseWriter, r *http.Request, curre
 	s.renderGroupsPanel(w, r, currentUser, http.StatusOK)
 }
 
+func (s *Server) handleUpdateBaseDN(w http.ResponseWriter, r *http.Request, currentUser store.User) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form submission", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SetBaseDN(r.Context(), r.Form.Get("base_dn")); err != nil {
+		s.renderPanelForView(w, r, currentUser, r.Form.Get("view"), err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.settings.SetBaseDN(r.Form.Get("base_dn")); err != nil {
+		s.renderPanelForView(w, r, currentUser, r.Form.Get("view"), err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.renderPanelForView(w, r, currentUser, r.Form.Get("view"), "", http.StatusOK)
+}
+
 func (s *Server) renderUsersPanel(w http.ResponseWriter, r *http.Request, currentUser store.User, status int) {
 	ctx := r.Context()
 	users, err := s.store.ListUsers(ctx)
@@ -296,7 +324,7 @@ func (s *Server) renderUsersPanel(w http.ResponseWriter, r *http.Request, curren
 	if htmxRequest(r) {
 		templateName = "users_panel.html"
 	}
-	s.render(w, templateName, pageData{Title: "Users", CurrentUser: currentUser, Users: users, Groups: groups, BaseDN: s.cfg.BaseDN}, status)
+	s.render(w, templateName, pageData{Title: "Users", CurrentUser: currentUser, Users: users, Groups: groups, BaseDN: s.baseDN(), View: "users"}, status)
 }
 
 func (s *Server) renderUsersPanelError(w http.ResponseWriter, r *http.Request, currentUser store.User, message string, status int) {
@@ -307,7 +335,7 @@ func (s *Server) renderUsersPanelError(w http.ResponseWriter, r *http.Request, c
 	if htmxRequest(r) {
 		templateName = "users_panel.html"
 	}
-	s.render(w, templateName, pageData{Title: "Users", CurrentUser: currentUser, Users: users, Groups: groups, BaseDN: s.cfg.BaseDN, Error: message}, status)
+	s.render(w, templateName, pageData{Title: "Users", CurrentUser: currentUser, Users: users, Groups: groups, BaseDN: s.baseDN(), View: "users", Error: message}, status)
 }
 
 func (s *Server) renderGroupsPanel(w http.ResponseWriter, r *http.Request, currentUser store.User, status int) {
@@ -317,13 +345,30 @@ func (s *Server) renderGroupsPanel(w http.ResponseWriter, r *http.Request, curre
 		http.Error(w, "failed to load groups", http.StatusInternalServerError)
 		return
 	}
-	s.render(w, chooseTemplate(r, "groups.html", "groups_panel.html"), pageData{Title: "Groups", CurrentUser: currentUser, Groups: groups, BaseDN: s.cfg.BaseDN}, status)
+	s.render(w, chooseTemplate(r, "groups.html", "groups_panel.html"), pageData{Title: "Groups", CurrentUser: currentUser, Groups: groups, BaseDN: s.baseDN(), View: "groups"}, status)
 }
 
 func (s *Server) renderGroupsPanelError(w http.ResponseWriter, r *http.Request, currentUser store.User, message string, status int) {
 	ctx := r.Context()
 	groups, _ := s.store.ListGroups(ctx)
-	s.render(w, chooseTemplate(r, "groups.html", "groups_panel.html"), pageData{Title: "Groups", CurrentUser: currentUser, Groups: groups, BaseDN: s.cfg.BaseDN, Error: message}, status)
+	s.render(w, chooseTemplate(r, "groups.html", "groups_panel.html"), pageData{Title: "Groups", CurrentUser: currentUser, Groups: groups, BaseDN: s.baseDN(), View: "groups", Error: message}, status)
+}
+
+func (s *Server) renderPanelForView(w http.ResponseWriter, r *http.Request, currentUser store.User, view, message string, status int) {
+	switch strings.ToLower(strings.TrimSpace(view)) {
+	case "groups":
+		if message == "" {
+			s.renderGroupsPanel(w, r, currentUser, status)
+			return
+		}
+		s.renderGroupsPanelError(w, r, currentUser, message, status)
+	default:
+		if message == "" {
+			s.renderUsersPanel(w, r, currentUser, status)
+			return
+		}
+		s.renderUsersPanelError(w, r, currentUser, message, status)
+	}
 }
 
 func (s *Server) withAdminAuth(next func(http.ResponseWriter, *http.Request, store.User)) http.HandlerFunc {
@@ -423,4 +468,8 @@ func chooseTemplate(r *http.Request, full, partial string) string {
 
 func htmxRequest(r *http.Request) bool {
 	return strings.EqualFold(r.Header.Get("HX-Request"), "true")
+}
+
+func (s *Server) baseDN() string {
+	return s.settings.BaseDN()
 }

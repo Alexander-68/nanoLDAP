@@ -15,6 +15,7 @@ import (
 
 	"nanoldap/internal/audit"
 	"nanoldap/internal/config"
+	"nanoldap/internal/directory"
 	"nanoldap/internal/store"
 )
 
@@ -36,6 +37,7 @@ const (
 
 type Server struct {
 	cfg         config.Config
+	settings    *directory.Settings
 	store       *store.Store
 	audit       *audit.Logger
 	connTokens  chan struct{}
@@ -83,9 +85,10 @@ type windowLimiter struct {
 	entries map[string][]time.Time
 }
 
-func New(cfg config.Config, dataStore *store.Store, auditLog *audit.Logger) *Server {
+func New(cfg config.Config, settings *directory.Settings, dataStore *store.Store, auditLog *audit.Logger) *Server {
 	return &Server{
 		cfg:         cfg,
+		settings:    settings,
 		store:       dataStore,
 		audit:       auditLog,
 		connTokens:  make(chan struct{}, cfg.LDAPMaxConnections),
@@ -169,6 +172,7 @@ func (s *Server) handleMessage(ctx context.Context, state *connState, msg ldapMe
 }
 
 func (s *Server) handleBind(ctx context.Context, state *connState, msg ldapMessage) ([]byte, bool) {
+	baseDN := s.settings.BaseDN()
 	if !s.bindLimiter.Allow(state.sourceIP) {
 		s.audit.LDAPBind(state.sourceIP, "", "rate_limited")
 		return berMessage(msg.id, resultPacket(1, resultBusy, "", "bind rate limit exceeded")), true
@@ -197,7 +201,7 @@ func (s *Server) handleBind(ctx context.Context, state *connState, msg ldapMessa
 		return berMessage(msg.id, resultPacket(1, resultSuccess, "", "")), false
 	}
 
-	username, ok := usernameFromDN(s.cfg.BaseDN, dn)
+	username, ok := usernameFromDN(baseDN, dn)
 	if !ok {
 		s.audit.LDAPBind(state.sourceIP, dn, "invalid_dn")
 		return berMessage(msg.id, resultPacket(1, resultInvalidDNSyntax, "", "invalid bind DN")), false
@@ -220,6 +224,7 @@ func (s *Server) handleBind(ctx context.Context, state *connState, msg ldapMessa
 }
 
 func (s *Server) handleSearch(ctx context.Context, state *connState, msg ldapMessage) []byte {
+	baseDN := s.settings.BaseDN()
 	if !state.searchLimiter.Allow(s.cfg.LDAPSearchRate) {
 		return berMessage(msg.id, resultPacket(5, resultAdminLimitExceeded, "", "search rate limit exceeded"))
 	}
@@ -233,12 +238,12 @@ func (s *Server) handleSearch(ctx context.Context, state *connState, msg ldapMes
 		if !isAnonymousRootDSERequest(request) {
 			return berMessage(msg.id, resultPacket(5, resultInsufficientAccessRights, "", "anonymous access is restricted to Root DSE"))
 		}
-		responses = append(responses, berMessage(msg.id, searchEntryPacket(rootDSE(s.cfg.BaseDN), request.attributes)))
+		responses = append(responses, berMessage(msg.id, searchEntryPacket(rootDSE(baseDN), request.attributes)))
 		responses = append(responses, berMessage(msg.id, resultPacket(5, resultSuccess, "", "")))
 		return bytesJoin(responses)
 	}
 
-	entries, err := s.visibleEntries(ctx, state.user)
+	entries, err := s.visibleEntries(ctx, state.user, baseDN)
 	if err != nil {
 		return berMessage(msg.id, resultPacket(5, resultBusy, "", "directory unavailable"))
 	}
@@ -279,7 +284,7 @@ func parseSearchRequest(pkt packet) (searchRequest, error) {
 	}, nil
 }
 
-func (s *Server) visibleEntries(ctx context.Context, user store.User) ([]directoryEntry, error) {
+func (s *Server) visibleEntries(ctx context.Context, user store.User, baseDN string) ([]directoryEntry, error) {
 	allUsers, err := s.store.ListUsers(ctx)
 	if err != nil {
 		return nil, err
@@ -289,9 +294,9 @@ func (s *Server) visibleEntries(ctx context.Context, user store.User) ([]directo
 		return nil, err
 	}
 	entries := []directoryEntry{
-		baseEntry(s.cfg.BaseDN),
-		containerEntry("people", s.cfg.BaseDN),
-		containerEntry("groups", s.cfg.BaseDN),
+		baseEntry(baseDN),
+		containerEntry("people", baseDN),
+		containerEntry("groups", baseDN),
 	}
 	adminScope := store.IsMemberOf(user, "admins", "mvradmins")
 	allowedUsernames := map[string]struct{}{user.Username: {}}
@@ -313,13 +318,13 @@ func (s *Server) visibleEntries(ctx context.Context, user store.User) ([]directo
 		if _, ok := allowedUsernames[candidate.Username]; !ok {
 			continue
 		}
-		entries = append(entries, userEntry(candidate, s.cfg.BaseDN))
+		entries = append(entries, userEntry(candidate, baseDN))
 	}
 	for _, group := range allGroups {
 		if _, ok := allowedGroups[group.Name]; !ok {
 			continue
 		}
-		entries = append(entries, groupEntry(group, s.cfg.BaseDN))
+		entries = append(entries, groupEntry(group, baseDN))
 	}
 	return entries, nil
 }

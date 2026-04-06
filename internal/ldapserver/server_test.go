@@ -11,6 +11,7 @@ import (
 
 	"nanoldap/internal/audit"
 	"nanoldap/internal/config"
+	"nanoldap/internal/directory"
 	"nanoldap/internal/store"
 )
 
@@ -201,7 +202,43 @@ func TestIdleTimeoutAndBindRateLimit(t *testing.T) {
 	}
 }
 
-func startLDAPServer(t *testing.T, cfg config.Config) (string, func()) {
+func TestUpdatedBaseDNIsUsedAtRuntime(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, config.Config{
+		BaseDN:             "dc=example,dc=com",
+		DBPath:             filepath.Join(t.TempDir(), "test.db"),
+		AuditLog:           filepath.Join(t.TempDir(), "audit.log"),
+		LDAPIdleTimeout:    time.Second,
+		LDAPBindWindow:     10 * time.Second,
+		LDAPBindLimit:      10,
+		LDAPSearchRate:     50,
+		LDAPMaxConnections: 16,
+	}, func(settings *directory.Settings, dataStore *store.Store) {
+		t.Helper()
+		if err := dataStore.SetBaseDN(context.Background(), "dc=corp,dc=local"); err != nil {
+			t.Fatalf("SetBaseDN() error = %v", err)
+		}
+		if err := settings.SetBaseDN("dc=corp,dc=local"); err != nil {
+			t.Fatalf("settings.SetBaseDN() error = %v", err)
+		}
+	})
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writeLDAP(t, conn, bindRequest(1, userDN("dc=corp,dc=local", "admin"), "admin"))
+	if code := ldapResultCode(t, readLDAPPacket(t, reader)); code != resultSuccess {
+		t.Fatalf("bind with updated base DN result = %d; want success", code)
+	}
+
+	writeLDAP(t, conn, searchRequestPacket(2, "ou=people,dc=corp,dc=local", scopeSubtree, equalityFilterPacket("uid", "guest")))
+	responses := readLDAPSearchResponses(t, reader)
+	if len(responses.entries) != 1 || !entryHasDN(responses.entries[0], userDN("dc=corp,dc=local", "guest")) {
+		t.Fatalf("updated base DN search returned %d entries; want guest under dc=corp,dc=local", len(responses.entries))
+	}
+}
+
+func startLDAPServer(t *testing.T, cfg config.Config, hooks ...func(*directory.Settings, *store.Store)) (string, func()) {
 	t.Helper()
 	ctx := context.Background()
 	dataStore, err := store.Open(ctx, cfg.DBPath)
@@ -211,11 +248,22 @@ func startLDAPServer(t *testing.T, cfg config.Config) (string, func()) {
 	if err := dataStore.SeedDefaults(ctx); err != nil {
 		t.Fatalf("SeedDefaults() error = %v", err)
 	}
+	baseDN, err := dataStore.EnsureBaseDN(ctx, cfg.BaseDN)
+	if err != nil {
+		t.Fatalf("EnsureBaseDN() error = %v", err)
+	}
+	settings, err := directory.NewSettings(baseDN)
+	if err != nil {
+		t.Fatalf("directory.NewSettings() error = %v", err)
+	}
+	for _, hook := range hooks {
+		hook(settings, dataStore)
+	}
 	auditLog, err := audit.New(cfg.AuditLog)
 	if err != nil {
 		t.Fatalf("audit.New() error = %v", err)
 	}
-	server := New(cfg, dataStore, auditLog)
+	server := New(cfg, settings, dataStore, auditLog)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen() error = %v", err)

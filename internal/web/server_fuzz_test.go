@@ -11,6 +11,7 @@ import (
 
 	"nanoldap/internal/audit"
 	"nanoldap/internal/config"
+	"nanoldap/internal/directory"
 	"nanoldap/internal/session"
 	"nanoldap/internal/store"
 )
@@ -34,11 +35,19 @@ func FuzzSecureMux(f *testing.F) {
 	f.Cleanup(func() {
 		_ = auditLog.Close()
 	})
+	baseDN, err := dataStore.EnsureBaseDN(context.Background(), "dc=example,dc=com")
+	if err != nil {
+		f.Fatalf("EnsureBaseDN() error = %v", err)
+	}
+	settings, err := directory.NewSettings(baseDN)
+	if err != nil {
+		f.Fatalf("directory.NewSettings() error = %v", err)
+	}
 	server := New(config.Config{
 		BaseDN:             "dc=example,dc=com",
 		SessionIdleTimeout: 15 * time.Minute,
 		SessionMax:         3,
-	}, dataStore, session.New(15*time.Minute, 3), auditLog, []byte("CERT"))
+	}, settings, dataStore, session.New(15*time.Minute, 3), auditLog, []byte("CERT"))
 	handler := server.SecureMux()
 
 	f.Add("bogus", []byte("username=admin&password=admin"))

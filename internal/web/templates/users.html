@@ -7,6 +7,7 @@
   <title>NanoLDAP Users</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <script src="/assets/htmx.min.js"></script>
+  <script src="/assets/admin.js" defer></script>
 </head>
 <body>
   <main class="shell">
@@ -17,26 +18,73 @@
 {{end}}
 
 {{define "users_panel.html"}}
-<section class="header">
-  <div>
+<section class="card panel page-header">
+  <div class="brand-block">
     <div class="brand">NanoLDAP</div>
-    <h1>Users</h1>
-    <p class="small">Base DN: <code>{{.BaseDN}}</code></p>
+    <nav class="tabs" aria-label="Admin pages">
+      <a class="tab active" href="/users">Users</a>
+      <a class="tab" href="/groups">Groups</a>
+    </nav>
   </div>
-  <div class="nav">
-    <a class="button secondary" href="/groups">Groups</a>
+  <div class="titlebar">
+    <h1>Users</h1>
+    <button class="icon-button" type="button" data-dialog-id="user-create-modal" aria-label="Create user">+</button>
+  </div>
+  <div class="header-tools">
+    <div class="meta-chip">
+      <span class="meta-label">Base DN</span>
+      <code>{{.BaseDN}}</code>
+      <button class="button secondary slim" type="button" data-dialog-id="base-dn-modal">Edit</button>
+    </div>
     <form method="post" action="/logout">
-      <button class="button secondary" type="submit">Logout {{.CurrentUser.Username}}</button>
+      <button class="button secondary slim" type="submit">Logout {{.CurrentUser.Username}}</button>
     </form>
   </div>
 </section>
 
 {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
 
-<section class="card panel stack" style="margin-bottom:1rem;">
-  <h2>Create User</h2>
-  <form class="stack" hx-post="/users" hx-target="#users-panel" hx-swap="outerHTML">
-    <div class="grid-2">
+<section class="card panel table-card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>Username</th>
+        <th>Display Name</th>
+        <th>Groups</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Users}}
+      <tr class="interactive-row" tabindex="0" data-dialog-id="user-edit-modal-{{.ID}}">
+        <td><code>{{.Username}}</code></td>
+        <td>{{.DisplayName}}</td>
+        <td>
+          {{if .Groups}}
+          <span class="truncate-text">{{join (groupNames .Groups) ", "}}</span>
+          {{else}}
+          <span class="small">No groups</span>
+          {{end}}
+        </td>
+        <td>
+          <span class="status-chip {{if .Disabled}}is-disabled{{else}}is-active{{end}}">{{if .Disabled}}Disabled{{else}}Active{{end}}</span>
+        </td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="4" class="empty-state">No users found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<dialog class="modal" id="user-create-modal">
+  <form class="stack" hx-post="/users" hx-target="#users-panel" hx-swap="innerHTML">
+    <div class="modal-header">
+      <h2>Create User</h2>
+    </div>
+    <div class="grid-2 compact-grid">
       <label>Username
         <input name="username" required>
       </label>
@@ -46,65 +94,81 @@
       <label>Password
         <input type="password" name="password" required>
       </label>
-      <label>Disabled
+      <label class="checkbox-field">
+        <span>Disabled</span>
         <input type="checkbox" name="disabled">
       </label>
     </div>
-    <div class="checkboxes">
-      {{range .Groups}}
-      <label><input type="checkbox" name="group" value="{{.Name}}"> {{.Name}}</label>
-      {{end}}
+    <div class="stack compact-stack">
+      <span class="small">Groups</span>
+      <div class="checkboxes">
+        {{range .Groups}}
+        <label><input type="checkbox" name="group" value="{{.Name}}"> {{.Name}}</label>
+        {{end}}
+      </div>
     </div>
-    <button type="submit">Create User</button>
+    <div class="modal-actions">
+      <button type="button" class="button secondary" data-close-dialog>Cancel</button>
+      <button type="submit">OK</button>
+    </div>
   </form>
-</section>
+</dialog>
 
-<section class="card panel">
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Username</th>
-        <th>Summary</th>
-        <th>Edit</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Users}}
-      <tr>
-        <td><code>{{.Username}}</code></td>
-        <td>
-          <div class="stack">
-            <div>{{.DisplayName}}</div>
-            <div>
-              {{range .Groups}}<span class="pill">{{.Name}}</span>{{end}}
-            </div>
-            <div class="small">{{if .Disabled}}Disabled{{else}}Active{{end}}</div>
-          </div>
-        </td>
-        <td>
-          {{$user := .}}
-          <form class="stack" hx-put="/users/{{.ID}}" hx-target="#users-panel" hx-swap="outerHTML">
-            <label>Display name
-              <input type="text" name="display_name" value="{{.DisplayName}}">
-            </label>
-            <div class="checkboxes">
-              {{range $.Groups}}
-              <label><input type="checkbox" name="group" value="{{.Name}}" {{if userInGroup $user .Name}}checked{{end}}> {{.Name}}</label>
-              {{end}}
-            </div>
-            <label><input type="checkbox" name="disabled" {{if .Disabled}}checked{{end}}> Disabled</label>
-            <label>Password
-              <input type="password" name="password" placeholder="Leave blank to keep">
-            </label>
-            <div class="nav">
-              <button type="submit">Save</button>
-              <button class="button danger" hx-delete="/users/{{.ID}}" hx-target="#users-panel" hx-swap="outerHTML" type="button">Delete</button>
-            </div>
-          </form>
-        </td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-</section>
+{{range .Users}}
+{{$user := .}}
+<dialog class="modal" id="user-edit-modal-{{.ID}}">
+  <form class="stack" hx-put="/users/{{.ID}}" hx-target="#users-panel" hx-swap="innerHTML">
+    <div class="modal-header">
+      <h2>Edit User</h2>
+    </div>
+    <div class="grid-2 compact-grid">
+      <label>Username
+        <input value="{{.Username}}" readonly>
+      </label>
+      <label>Display name
+        <input name="display_name" value="{{.DisplayName}}">
+      </label>
+      <label>Password
+        <input type="password" name="password" placeholder="Leave blank to keep">
+      </label>
+      <label class="checkbox-field">
+        <span>Disabled</span>
+        <input type="checkbox" name="disabled" {{if .Disabled}}checked{{end}}>
+      </label>
+    </div>
+    <div class="stack compact-stack">
+      <span class="small">Groups</span>
+      <div class="checkboxes">
+        {{range $.Groups}}
+        <label><input type="checkbox" name="group" value="{{.Name}}" {{if userInGroup $user .Name}}checked{{end}}> {{.Name}}</label>
+        {{end}}
+      </div>
+    </div>
+    <div class="modal-actions split-actions">
+      <button class="button danger" hx-delete="/users/{{.ID}}" hx-target="#users-panel" hx-swap="innerHTML" hx-confirm="Delete user {{.Username}}?" type="button">Delete</button>
+      <div class="action-pair">
+        <button type="button" class="button secondary" data-close-dialog>Cancel</button>
+        <button type="submit">OK</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+{{end}}
+
+<dialog class="modal" id="base-dn-modal">
+  <form class="stack" hx-put="/settings/base-dn" hx-target="#users-panel" hx-swap="innerHTML">
+    <div class="modal-header">
+      <h2>Edit Base DN</h2>
+    </div>
+    <input type="hidden" name="view" value="{{.View}}">
+    <label>Base DN
+      <input name="base_dn" value="{{.BaseDN}}" required>
+    </label>
+    <p class="small">Use domain components such as <code>dc=example,dc=com</code>.</p>
+    <div class="modal-actions">
+      <button type="button" class="button secondary" data-close-dialog>Cancel</button>
+      <button type="submit">OK</button>
+    </div>
+  </form>
+</dialog>
 {{end}}

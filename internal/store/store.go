@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"nanoldap/internal/auth"
+	"nanoldap/internal/directory"
 )
 
 type Store struct {
@@ -91,6 +92,10 @@ func (s *Store) Migrate(ctx context.Context) error {
 			group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
 			PRIMARY KEY (user_id, group_id)
 		);`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		);`,
 		`CREATE INDEX IF NOT EXISTS idx_user_groups_user_id ON user_groups(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_user_groups_group_id ON user_groups(group_id);`,
 	}
@@ -135,6 +140,49 @@ func (s *Store) SeedDefaults(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (s *Store) EnsureBaseDN(ctx context.Context, fallback string) (string, error) {
+	current, err := s.BaseDN(ctx)
+	switch {
+	case err == nil:
+		return current, nil
+	case !errors.Is(err, sql.ErrNoRows):
+		return "", err
+	}
+
+	normalized, err := directory.NormalizeBaseDN(fallback)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES ('base_dn', ?)
+		ON CONFLICT(key) DO NOTHING
+	`, normalized); err != nil {
+		return "", err
+	}
+	return s.BaseDN(ctx)
+}
+
+func (s *Store) BaseDN(ctx context.Context) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'base_dn'`).Scan(&value)
+	if err != nil {
+		return "", err
+	}
+	return directory.NormalizeBaseDN(value)
+}
+
+func (s *Store) SetBaseDN(ctx context.Context, baseDN string) error {
+	normalized, err := directory.NormalizeBaseDN(baseDN)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value) VALUES ('base_dn', ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, normalized)
+	return err
 }
 
 func (s *Store) AuthenticateUser(ctx context.Context, username, password string) (User, error) {
@@ -325,6 +373,9 @@ func (s *Store) CreateGroup(ctx context.Context, input GroupInput) (Group, error
 }
 
 func (s *Store) UpdateGroup(ctx context.Context, id int64, input GroupInput) (Group, error) {
+	if strings.TrimSpace(input.Name) == "" {
+		return Group{}, errors.New("group name is required")
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE groups SET name = ?, description = ? WHERE id = ?`, strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), id)
 	if err != nil {
 		return Group{}, err
