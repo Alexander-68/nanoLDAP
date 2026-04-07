@@ -5,6 +5,7 @@ NanoLDAP is a minimal, self-contained LDAP/LDAPS server with an embedded HTTP/HT
 ## Features
 
 - Read-only LDAP and LDAPS listeners with anonymous Root DSE access, simple bind, scoped search, mutation rejection, per-IP bind throttling, per-connection search throttling, idle connection expiry, and a global concurrent connection cap. Root DSE searches return `namingContexts` for all-attribute requests including `*`, `ALL`, and `*` with `+`, and anonymous empty-base subtree searches are accepted as a compatibility alias for Root DSE lookups.
+- Optional `--ldap-debug` protocol tracing logs each parsed LDAP request and the server's encoded LDAP responses to the process log for troubleshooting, while redacting simple-bind passwords.
 - HTTP and HTTPS administration UI built with `net/http`, `html/template`, bundled `htmx.min.js`, and locally served CSS. Users and groups are managed through compact modal dialogs, row-click editing, a single-row header, and an admin-editable Base DN control. Any listener whose port is explicitly configured is considered valid for direct use.
 - Argon2id password hashing in PHC format, secure in-memory sessions with `Secure`, `HttpOnly`, `SameSite=Strict` cookies, a global 3-session limit, 15-minute idle expiry, and per-user session revocation.
 - SQLite-backed user/group CRUD with default first-run provisioning for `admins`, `mvradmins`, `users`, and `guests` plus `admin`, `mvradmin`, `user`, and `guest` seed accounts. The effective Base DN is persisted in SQLite so web UI changes survive restarts.
@@ -54,6 +55,7 @@ Available flags:
 - `--audit-log`: `stdout` or a file path. Default: `stdout`
 - `--cert-file`: TLS certificate path. Default: `cert.pem`
 - `--key-file`: TLS private key path. Default: `key.pem`
+- `--ldap-debug`: print LDAP request and response debug traces to the process log. Default: `false`
 - `--http-port`, `--https-port`, `--ldap-port`, `--ldaps-port`: listener ports. Default: disabled (`0`)
 
 For LAN access from another PC, do not use `127.0.0.1` or `localhost` as `--bind-addr`. Use `0.0.0.0` to listen on all interfaces, or bind to the machine's LAN IP directly.

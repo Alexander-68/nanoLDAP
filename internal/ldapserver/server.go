@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"slices"
 	"strings"
@@ -40,6 +41,7 @@ type Server struct {
 	settings    *directory.Settings
 	store       *store.Store
 	audit       *audit.Logger
+	debugLog    *log.Logger
 	connTokens  chan struct{}
 	bindLimiter *windowLimiter
 }
@@ -71,6 +73,7 @@ type directoryEntry struct {
 	dn               string
 	aliasDNs         []string
 	attrs            map[string][]string
+	displayAttrs     map[string]string
 	operationalAttrs map[string]struct{}
 }
 
@@ -86,12 +89,17 @@ type windowLimiter struct {
 	entries map[string][]time.Time
 }
 
-func New(cfg config.Config, settings *directory.Settings, dataStore *store.Store, auditLog *audit.Logger) *Server {
+func New(cfg config.Config, settings *directory.Settings, dataStore *store.Store, auditLog *audit.Logger, debugSink io.Writer) *Server {
+	var debugLog *log.Logger
+	if cfg.LDAPDebug && debugSink != nil {
+		debugLog = log.New(debugSink, "ldap-debug ", log.LstdFlags|log.Lmicroseconds)
+	}
 	return &Server{
 		cfg:         cfg,
 		settings:    settings,
 		store:       dataStore,
 		audit:       auditLog,
+		debugLog:    debugLog,
 		connTokens:  make(chan struct{}, cfg.LDAPMaxConnections),
 		bindLimiter: &windowLimiter{window: cfg.LDAPBindWindow, limit: cfg.LDAPBindLimit, entries: make(map[string][]time.Time)},
 	}
@@ -145,7 +153,9 @@ func (s *Server) handleConn(conn net.Conn) error {
 			}
 			return nil
 		}
+		s.logRequest(state, msg)
 		response, closeConn := s.handleMessage(context.Background(), state, msg)
+		s.logResponse(state, msg, response)
 		if len(response) > 0 {
 			if _, err := conn.Write(response); err != nil {
 				return nil
@@ -155,6 +165,25 @@ func (s *Server) handleConn(conn net.Conn) error {
 			return nil
 		}
 	}
+}
+
+func (s *Server) logRequest(state *connState, msg ldapMessage) {
+	if s == nil || s.debugLog == nil {
+		return
+	}
+	s.debugLog.Printf("request remote=%s message_id=%d op=%s payload=%s", state.sourceIP, msg.id, ldapOpName(msg.op.tag), formatDebugMessage(msg.raw))
+}
+
+func (s *Server) logResponse(state *connState, msg ldapMessage, response []byte) {
+	if s == nil || s.debugLog == nil || len(response) == 0 {
+		return
+	}
+	messages, err := decodeMessages(response)
+	if err != nil {
+		s.debugLog.Printf("response remote=%s message_id=%d op=%s decode_error=%q bytes=%d", state.sourceIP, msg.id, ldapOpName(msg.op.tag), err.Error(), len(response))
+		return
+	}
+	s.debugLog.Printf("response remote=%s message_id=%d op=%s payload=%s", state.sourceIP, msg.id, ldapOpName(msg.op.tag), formatDebugMessages(messages))
 }
 
 func (s *Server) handleMessage(ctx context.Context, state *connState, msg ldapMessage) ([]byte, bool) {
@@ -360,8 +389,9 @@ func searchEntryPacket(entry directoryEntry, requested []string) []byte {
 		for _, value := range values {
 			setValues = append(setValues, berOctetString(value))
 		}
+		displayName := attributeDisplayName(entry, name)
 		attributes = append(attributes, berSequence(
-			berOctetString(name),
+			berOctetString(displayName),
 			berSet(setValues...),
 		))
 	}
@@ -416,6 +446,13 @@ func selectedAttributes(entry directoryEntry, requested []string) map[string][]s
 	return selected
 }
 
+func attributeDisplayName(entry directoryEntry, name string) string {
+	if displayName, ok := entry.displayAttrs[strings.ToLower(name)]; ok {
+		return displayName
+	}
+	return name
+}
+
 func isAnonymousRootDSERequest(request searchRequest) bool {
 	return request.baseDN == "" && (request.scope == scopeBaseObject || request.scope == scopeSubtree)
 }
@@ -458,6 +495,12 @@ func rootDSE(baseDN string) directoryEntry {
 			"namingcontexts":       {},
 			"supportedldapversion": {},
 			"vendorname":           {},
+		},
+		displayAttrs: map[string]string{
+			"namingcontexts":       "namingContexts",
+			"supportedldapversion": "supportedLDAPVersion",
+			"vendorname":           "vendorName",
+			"objectclass":          "objectClass",
 		},
 	}
 }

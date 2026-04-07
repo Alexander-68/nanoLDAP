@@ -80,7 +80,7 @@ func run(stderr *os.File) error {
 		_, _ = fmt.Fprintf(stderr, "HTTPS listening on %s\n", server.Addr)
 	}
 
-	ldap := ldapserver.New(cfg, instance.Settings(), instance.Store(), instance.Audit())
+	ldap := ldapserver.New(cfg, instance.Settings(), instance.Store(), instance.Audit(), stderr)
 
 	if cfg.LDAPPort > 0 {
 		listener, err := net.Listen("tcp", cfg.Addr(cfg.LDAPPort))

@@ -4,8 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"net"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,8 +46,8 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	if len(responses.entries) != 1 {
 		t.Fatalf("anonymous Root DSE entries = %d; want 1", len(responses.entries))
 	}
-	if !bytes.Contains(responses.entries[0].children[1].content, []byte("namingContexts")) && !containsAttribute(responses.entries[0], "namingcontexts") {
-		t.Fatalf("Root DSE response missing namingContexts attribute")
+	if !containsAttribute(responses.entries[0], "namingContexts") {
+		t.Fatalf("Root DSE response missing canonical namingContexts attribute")
 	}
 
 	connAll := dialLDAP(t, addr)
@@ -57,10 +60,10 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	if len(allResponses.entries) != 1 {
 		t.Fatalf("anonymous Root DSE ALL entries = %d; want 1", len(allResponses.entries))
 	}
-	if !containsAttribute(allResponses.entries[0], "namingcontexts") {
+	if !containsAttribute(allResponses.entries[0], "namingContexts") {
 		t.Fatalf("Root DSE ALL response missing namingContexts attribute")
 	}
-	if !containsAttribute(allResponses.entries[0], "objectclass") {
+	if !containsAttribute(allResponses.entries[0], "objectClass") {
 		t.Fatalf("Root DSE ALL response missing objectClass attribute")
 	}
 
@@ -74,10 +77,10 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	if len(starPlusResponses.entries) != 1 {
 		t.Fatalf("anonymous Root DSE * + entries = %d; want 1", len(starPlusResponses.entries))
 	}
-	if !containsAttribute(starPlusResponses.entries[0], "namingcontexts") {
+	if !containsAttribute(starPlusResponses.entries[0], "namingContexts") {
 		t.Fatalf("Root DSE * + response missing namingContexts attribute")
 	}
-	if !containsAttribute(starPlusResponses.entries[0], "objectclass") {
+	if !containsAttribute(starPlusResponses.entries[0], "objectClass") {
 		t.Fatalf("Root DSE * + response missing objectClass attribute")
 	}
 
@@ -91,7 +94,7 @@ func TestAnonymousRootDSEAndRestrictions(t *testing.T) {
 	if len(subtreeResponses.entries) != 1 {
 		t.Fatalf("anonymous Root DSE subtree entries = %d; want 1", len(subtreeResponses.entries))
 	}
-	if !containsAttribute(subtreeResponses.entries[0], "namingcontexts") {
+	if !containsAttribute(subtreeResponses.entries[0], "namingContexts") {
 		t.Fatalf("Root DSE subtree response missing namingContexts attribute")
 	}
 
@@ -278,7 +281,57 @@ func TestLegacyPeopleAndGroupsAliasesRemainQueryable(t *testing.T) {
 	}
 }
 
+func TestLDAPDebugLogsRequestsAndResponses(t *testing.T) {
+	logSink := &lockedBuffer{}
+	addr, cleanup := startLDAPServerWithDebug(t, config.Config{
+		BaseDN:             "dc=example,dc=com",
+		DBPath:             filepath.Join(t.TempDir(), "test.db"),
+		AuditLog:           filepath.Join(t.TempDir(), "audit.log"),
+		LDAPDebug:          true,
+		LDAPIdleTimeout:    time.Second,
+		LDAPBindWindow:     10 * time.Second,
+		LDAPBindLimit:      10,
+		LDAPSearchRate:     50,
+		LDAPMaxConnections: 16,
+	}, logSink)
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+
+	writeLDAP(t, conn, bindRequest(1, userDN("dc=example,dc=com", "user"), "user"))
+	if code := ldapResultCode(t, readLDAPPacket(t, reader)); code != resultSuccess {
+		t.Fatalf("bind result = %d; want success", code)
+	}
+
+	writeLDAP(t, conn, searchRequestPacket(2, "", scopeBaseObject, presentFilterPacket("objectClass")))
+	_ = readLDAPSearchResponses(t, reader)
+
+	logs := logSink.String()
+	for _, fragment := range []string{
+		"request remote=",
+		"response remote=",
+		"BindRequest{version=3",
+		`authentication=simple("<redacted>")`,
+		"BindResponse{result=success",
+		"SearchRequest{baseDN=\"\"",
+		"SearchResultDone{result=success",
+	} {
+		if !strings.Contains(logs, fragment) {
+			t.Fatalf("debug logs missing %q\nlogs:\n%s", fragment, logs)
+		}
+	}
+	if strings.Contains(logs, `authentication=simple("user")`) {
+		t.Fatalf("debug logs leaked bind password:\n%s", logs)
+	}
+}
+
 func startLDAPServer(t *testing.T, cfg config.Config, hooks ...func(*directory.Settings, *store.Store)) (string, func()) {
+	return startLDAPServerWithDebug(t, cfg, io.Discard, hooks...)
+}
+
+func startLDAPServerWithDebug(t *testing.T, cfg config.Config, debugSink io.Writer, hooks ...func(*directory.Settings, *store.Store)) (string, func()) {
 	t.Helper()
 	ctx := context.Background()
 	dataStore, err := store.Open(ctx, cfg.DBPath)
@@ -303,7 +356,7 @@ func startLDAPServer(t *testing.T, cfg config.Config, hooks ...func(*directory.S
 	if err != nil {
 		t.Fatalf("audit.New() error = %v", err)
 	}
-	server := New(cfg, settings, dataStore, auditLog)
+	server := New(cfg, settings, dataStore, auditLog, debugSink)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("net.Listen() error = %v", err)
@@ -323,6 +376,23 @@ func dialLDAP(t *testing.T, addr string) net.Conn {
 		t.Fatalf("net.Dial() error = %v", err)
 	}
 	return conn
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func bindRequest(messageID int, dn, password string) []byte {

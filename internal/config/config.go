@@ -14,6 +14,7 @@ type Config struct {
 	AuditLog           string
 	CertFile           string
 	KeyFile            string
+	LDAPDebug          bool
 	HTTPPort           int
 	HTTPSPort          int
 	LDAPPort           int
@@ -54,6 +55,7 @@ func Load() Config {
 	flag.StringVar(&cfg.AuditLog, "audit-log", cfg.AuditLog, "audit log destination path or stdout")
 	flag.StringVar(&cfg.CertFile, "cert-file", cfg.CertFile, "certificate file path")
 	flag.StringVar(&cfg.KeyFile, "key-file", cfg.KeyFile, "private key file path")
+	flag.BoolVar(&cfg.LDAPDebug, "ldap-debug", cfg.LDAPDebug, "enable LDAP request/response debug logging")
 	flag.IntVar(&cfg.HTTPPort, "http-port", cfg.HTTPPort, "HTTP web UI and public certificate endpoint port")
 	flag.IntVar(&cfg.HTTPSPort, "https-port", cfg.HTTPSPort, "HTTPS web UI port")
 	flag.IntVar(&cfg.LDAPPort, "ldap-port", cfg.LDAPPort, "LDAP port")
