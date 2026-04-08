@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -94,5 +96,192 @@ func TestStoreBaseDNSettingPersists(t *testing.T) {
 	}
 	if updated != "dc=corp,dc=local" {
 		t.Fatalf("BaseDN() = %q; want %q", updated, "dc=corp,dc=local")
+	}
+}
+
+func TestStoreBaseDNNotSetReturnsErrNoRows(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.BaseDN(ctx); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("BaseDN() error = %v; want sql.ErrNoRows", err)
+	}
+}
+
+func TestStoreBaseDNPersistsAcrossReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "nanoldap.db")
+	first, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if _, err := first.EnsureBaseDN(ctx, "dc=example,dc=com"); err != nil {
+		t.Fatalf("EnsureBaseDN() error = %v", err)
+	}
+	if err := first.SetBaseDN(ctx, "dc=corp,dc=local"); err != nil {
+		t.Fatalf("SetBaseDN() error = %v", err)
+	}
+	if err := first.SeedDefaults(ctx); err != nil {
+		t.Fatalf("SeedDefaults() error = %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	second, err := Open(ctx, path)
+	if err != nil {
+		t.Fatalf("re-Open() error = %v", err)
+	}
+	defer second.Close()
+	got, err := second.BaseDN(ctx)
+	if err != nil {
+		t.Fatalf("BaseDN() error = %v", err)
+	}
+	if got != "dc=corp,dc=local" {
+		t.Fatalf("BaseDN() after reopen = %q; want %q", got, "dc=corp,dc=local")
+	}
+	users, err := second.ListUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListUsers() error = %v", err)
+	}
+	if len(users) != 4 {
+		t.Fatalf("ListUsers() after reopen = %d; want 4", len(users))
+	}
+}
+
+func TestStoreCreateUserRejectsEmptyInput(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	for name, input := range map[string]UserInput{
+		"empty username": {Username: " ", Password: "secret"},
+		"empty password": {Username: "alice", Password: " "},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := store.CreateUser(ctx, input); err == nil {
+				t.Fatalf("CreateUser(%v) error = nil; want validation error", input)
+			}
+		})
+	}
+}
+
+func TestStoreCreateUserRejectsDuplicateUsername(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.CreateUser(ctx, UserInput{Username: "alice", Password: "secret"}); err != nil {
+		t.Fatalf("first CreateUser() error = %v", err)
+	}
+	if _, err := store.CreateUser(ctx, UserInput{Username: "alice", Password: "other"}); err == nil {
+		t.Fatalf("second CreateUser() error = nil; want UNIQUE constraint failure")
+	}
+}
+
+func TestStoreCreateUserRejectsUnknownGroup(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.CreateUser(ctx, UserInput{
+		Username:   "alice",
+		Password:   "secret",
+		GroupNames: []string{"nonexistent"},
+	}); err == nil {
+		t.Fatalf("CreateUser() error = nil; want unknown-group failure")
+	}
+	if _, err := store.GetUserByUsername(ctx, "alice"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetUserByUsername() = %v; want sql.ErrNoRows (transaction rolled back)", err)
+	}
+}
+
+func TestStoreGetUserByUsernameNotFound(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.GetUserByUsername(ctx, "missing"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetUserByUsername() error = %v; want sql.ErrNoRows", err)
+	}
+}
+
+func TestStoreUpdateGroupRenameAndDelete(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	group, err := store.CreateGroup(ctx, GroupInput{Name: "ops", Description: "operators"})
+	if err != nil {
+		t.Fatalf("CreateGroup() error = %v", err)
+	}
+	updated, err := store.UpdateGroup(ctx, group.ID, GroupInput{Name: "platform", Description: "platform team"})
+	if err != nil {
+		t.Fatalf("UpdateGroup() error = %v", err)
+	}
+	if updated.Name != "platform" || updated.Description != "platform team" {
+		t.Fatalf("UpdateGroup() = %#v; want renamed/redescribed", updated)
+	}
+	if err := store.DeleteGroup(ctx, group.ID); err != nil {
+		t.Fatalf("DeleteGroup() error = %v", err)
+	}
+	if _, err := store.GetGroupByID(ctx, group.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("GetGroupByID() after delete error = %v; want sql.ErrNoRows", err)
+	}
+}
+
+func TestStoreIsMemberOfMatchesCaseInsensitively(t *testing.T) {
+	user := User{
+		Groups: []Group{
+			{Name: "Admins"},
+			{Name: "users"},
+		},
+	}
+	if !IsMemberOf(user, "admins") {
+		t.Fatalf("IsMemberOf(admins) = false; want true (case-insensitive)")
+	}
+	if !IsMemberOf(user, "USERS") {
+		t.Fatalf("IsMemberOf(USERS) = false; want true (case-insensitive)")
+	}
+	if IsMemberOf(user, "guests") {
+		t.Fatalf("IsMemberOf(guests) = true; want false")
+	}
+}
+
+func TestStoreAuthenticateUserWrongPassword(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "nanoldap.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer store.Close()
+
+	if _, err := store.CreateUser(ctx, UserInput{Username: "alice", Password: "secret"}); err != nil {
+		t.Fatalf("CreateUser() error = %v", err)
+	}
+	if _, err := store.AuthenticateUser(ctx, "alice", "wrong"); err == nil {
+		t.Fatalf("AuthenticateUser(wrong) error = nil; want failure")
+	}
+	if _, err := store.AuthenticateUser(ctx, "alice", "secret"); err != nil {
+		t.Fatalf("AuthenticateUser(correct) error = %v; want success", err)
 	}
 }

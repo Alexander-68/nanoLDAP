@@ -1,6 +1,7 @@
 package ldapserver
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -81,7 +82,7 @@ func parseFilter(pkt packet) (Filter, error) {
 	case pkt.class == classContext && pkt.tag == 7:
 		return presentFilter{attr: pkt.str()}, nil
 	default:
-		return presentFilter{attr: "objectClass"}, nil
+		return nil, fmt.Errorf("unsupported LDAP filter tag %d", pkt.tag)
 	}
 }
 

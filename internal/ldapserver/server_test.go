@@ -182,11 +182,16 @@ func TestIdleTimeoutAndBindRateLimit(t *testing.T) {
 	conn := dialLDAP(t, addr)
 	defer conn.Close()
 	time.Sleep(350 * time.Millisecond)
-	if _, err := conn.Write(bindRequest(1, "", "")); err == nil {
-		_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		if _, err := readPacket(bufio.NewReader(conn)); err == nil {
-			t.Fatalf("connection remained open after idle timeout")
-		}
+	// The server must have closed our connection by now. The Write may still
+	// succeed because the kernel TCP buffer accepts the bytes locally, so the
+	// authoritative check is the read: it must fail (EOF or io.ErrClosedPipe)
+	// rather than ever returning a packet.
+	_, _ = conn.Write(bindRequest(1, "", ""))
+	if err := conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	if _, err := readPacket(bufio.NewReader(conn)); err == nil {
+		t.Fatalf("connection remained open after idle timeout: read returned a packet")
 	}
 
 	for attempt := 1; attempt <= 4; attempt++ {
@@ -327,6 +332,266 @@ func TestLDAPDebugLogsRequestsAndResponses(t *testing.T) {
 	}
 }
 
+func TestUnsupportedFiltersReturnProtocolError(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	cases := map[string][]byte{
+		"substring":    substringFilterPacket("uid", "ad"),
+		"greaterEqual": greaterOrEqualFilterPacket("uid", "a"),
+		"lessEqual":    lessOrEqualFilterPacket("uid", "z"),
+		"approxMatch":  approxMatchFilterPacket("uid", "admn"),
+		"not":          notFilterPacket(equalityFilterPacket("uid", "admin")),
+	}
+	messageID := 2
+	for name, filter := range cases {
+		t.Run(name, func(t *testing.T) {
+			writeLDAP(t, conn, searchRequestPacket(messageID, "dc=example,dc=com", scopeSubtree, filter))
+			pkt := readLDAPPacket(t, reader)
+			if code := ldapResultCode(t, pkt); code != resultProtocolError {
+				t.Fatalf("%s filter result = %d; want %d", name, code, resultProtocolError)
+			}
+		})
+		messageID++
+	}
+}
+
+func TestInvalidScopeReturnsProtocolError(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	writeLDAP(t, conn, searchRequestPacket(2, "dc=example,dc=com", 99, presentFilterPacket("objectClass")))
+	pkt := readLDAPPacket(t, reader)
+	if code := ldapResultCode(t, pkt); code != resultProtocolError {
+		t.Fatalf("invalid scope result = %d; want %d", code, resultProtocolError)
+	}
+}
+
+func TestSingleLevelScopeReturnsImmediateChildren(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	writeLDAP(t, conn, searchRequestPacket(2, "dc=example,dc=com", scopeSingle, presentFilterPacket("objectClass")))
+	responses := readLDAPSearchResponses(t, reader)
+	if len(responses.entries) == 0 {
+		t.Fatalf("singleLevel search returned 0 entries; expected at least the people/groups OUs and seed users")
+	}
+	for _, entry := range responses.entries {
+		dn := entry.children[0].str()
+		if !(dn == "ou=people,dc=example,dc=com" ||
+			dn == "ou=groups,dc=example,dc=com" ||
+			strings.HasPrefix(dn, "uid=") ||
+			strings.HasPrefix(dn, "cn=")) {
+			t.Fatalf("singleLevel returned unexpected child DN %q", dn)
+		}
+		if strings.Count(dn, ",") != 1 && strings.Count(dn, ",") != 2 {
+			// Each child must be one component below the base.
+			t.Fatalf("singleLevel returned non-immediate child DN %q", dn)
+		}
+	}
+}
+
+func TestNoAttributesMarker(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	writeLDAP(t, conn, searchRequestPacketWithAttributes(2, peopleBaseDN("dc=example,dc=com"), scopeSubtree, equalityFilterPacket("uid", "admin"), "1.1"))
+	responses := readLDAPSearchResponses(t, reader)
+	if len(responses.entries) != 1 {
+		t.Fatalf("1.1 marker returned %d entries; want 1", len(responses.entries))
+	}
+	if count := entryAttributeCount(responses.entries[0]); count != 0 {
+		t.Fatalf("1.1 marker entry returned %d attributes; want 0", count)
+	}
+}
+
+func TestRootDSEPlusReturnsOperationalAttributesOnly(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writeLDAP(t, conn, bindRequest(1, "", ""))
+	_ = readLDAPPacket(t, reader)
+
+	writeLDAP(t, conn, searchRequestPacketWithAttributes(2, "", scopeBaseObject, presentFilterPacket("objectClass"), "+"))
+	responses := readLDAPSearchResponses(t, reader)
+	if len(responses.entries) != 1 {
+		t.Fatalf("Root DSE + entries = %d; want 1", len(responses.entries))
+	}
+	if !containsAttribute(responses.entries[0], "namingContexts") {
+		t.Fatalf("Root DSE + missing namingContexts attribute")
+	}
+	if containsAttribute(responses.entries[0], "objectClass") {
+		t.Fatalf("Root DSE + should not include objectClass when only operational attributes are requested")
+	}
+}
+
+func TestBaseEntryDcIsMultiValued(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	writeLDAP(t, conn, searchRequestPacketWithAttributes(2, "dc=example,dc=com", scopeBaseObject, presentFilterPacket("objectClass"), "dc"))
+	responses := readLDAPSearchResponses(t, reader)
+	if len(responses.entries) != 1 {
+		t.Fatalf("base search entries = %d; want 1", len(responses.entries))
+	}
+	values := attributeValues(responses.entries[0], "dc")
+	if len(values) != 2 || values[0] != "example" || values[1] != "com" {
+		t.Fatalf("base entry dc = %v; want [example com]", values)
+	}
+}
+
+func TestSecondBindOnSameConnectionRejected(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	writeLDAP(t, conn, bindRequest(2, userDN("dc=example,dc=com", "user"), "user"))
+	pkt := readLDAPPacket(t, reader)
+	if code := ldapResultCode(t, pkt); code != resultUnwillingToPerform {
+		t.Fatalf("second bind result = %d; want %d", code, resultUnwillingToPerform)
+	}
+}
+
+func TestMutationOperationsRejected(t *testing.T) {
+	addr, cleanup := startLDAPServer(t, defaultLDAPTestConfig(t))
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	cases := map[string]struct {
+		requestTag  int
+		responseTag int
+	}{
+		"modify":   {6, 7},
+		"add":      {8, 9},
+		"delete":   {10, 11},
+		"modifyDN": {12, 13},
+	}
+	messageID := 2
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			writeLDAP(t, conn, mutationOperationPacket(messageID, tc.requestTag))
+			pkt := readLDAPPacket(t, reader)
+			op := pkt.children[1]
+			if op.class != classApplication || op.tag != tc.responseTag {
+				t.Fatalf("%s response op tag = %d; want %d", name, op.tag, tc.responseTag)
+			}
+			if code := ldapResultCode(t, pkt); code != resultUnwillingToPerform {
+				t.Fatalf("%s response code = %d; want %d", name, code, resultUnwillingToPerform)
+			}
+		})
+		messageID++
+	}
+}
+
+func TestSearchRateLimitTriggersAdminLimitExceeded(t *testing.T) {
+	cfg := defaultLDAPTestConfig(t)
+	cfg.LDAPSearchRate = 5
+	addr, cleanup := startLDAPServer(t, cfg)
+	defer cleanup()
+
+	conn := dialLDAP(t, addr)
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	bindAs(t, conn, reader, 1, userDN("dc=example,dc=com", "admin"), "admin")
+
+	for messageID := 2; messageID <= 6; messageID++ {
+		writeLDAP(t, conn, searchRequestPacket(messageID, "dc=example,dc=com", scopeBaseObject, presentFilterPacket("objectClass")))
+		_ = readLDAPSearchResponses(t, reader)
+	}
+
+	writeLDAP(t, conn, searchRequestPacket(7, "dc=example,dc=com", scopeBaseObject, presentFilterPacket("objectClass")))
+	pkt := readLDAPPacket(t, reader)
+	if code := ldapResultCode(t, pkt); code != resultAdminLimitExceeded {
+		t.Fatalf("over-limit search result = %d; want %d", code, resultAdminLimitExceeded)
+	}
+}
+
+func TestConnectionLimitDropsExcessConnections(t *testing.T) {
+	cfg := defaultLDAPTestConfig(t)
+	cfg.LDAPMaxConnections = 2
+	addr, cleanup := startLDAPServer(t, cfg)
+	defer cleanup()
+
+	// Hold the two allowed slots with anonymous binds.
+	held := make([]net.Conn, 0, 2)
+	defer func() {
+		for _, c := range held {
+			_ = c.Close()
+		}
+	}()
+	for i := 1; i <= 2; i++ {
+		conn := dialLDAP(t, addr)
+		reader := bufio.NewReader(conn)
+		writeLDAP(t, conn, bindRequest(i, "", ""))
+		if code := ldapResultCode(t, readLDAPPacket(t, reader)); code != resultSuccess {
+			t.Fatalf("anonymous bind %d result = %d; want success", i, code)
+		}
+		held = append(held, conn)
+	}
+
+	// The third connection must be dropped immediately by the server.
+	overflow := dialLDAP(t, addr)
+	defer overflow.Close()
+	if err := overflow.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 16)
+	n, err := overflow.Read(buf)
+	if err == nil {
+		t.Fatalf("overflow connection read returned %d bytes; want EOF", n)
+	}
+}
+
+func defaultLDAPTestConfig(t *testing.T) config.Config {
+	t.Helper()
+	return config.Config{
+		BaseDN:             "dc=example,dc=com",
+		DBPath:             filepath.Join(t.TempDir(), "test.db"),
+		AuditLog:           filepath.Join(t.TempDir(), "audit.log"),
+		LDAPIdleTimeout:    2 * time.Second,
+		LDAPBindWindow:     10 * time.Second,
+		LDAPBindLimit:      10,
+		LDAPSearchRate:     50,
+		LDAPMaxConnections: 16,
+	}
+}
+
 func startLDAPServer(t *testing.T, cfg config.Config, hooks ...func(*directory.Settings, *store.Store)) (string, func()) {
 	return startLDAPServerWithDebug(t, cfg, io.Discard, hooks...)
 }
@@ -439,6 +704,42 @@ func orFilterPacket(children ...[]byte) []byte {
 	return append([]byte{0xa1}, appendLength(bytesJoin(children))...)
 }
 
+func notFilterPacket(child []byte) []byte {
+	return append([]byte{0xa2}, appendLength(child)...)
+}
+
+func substringFilterPacket(attr, initial string) []byte {
+	return append([]byte{0xa4}, appendLength(bytesJoin([][]byte{
+		berOctetString(attr),
+		berSequence(append([]byte{0x80}, appendLength([]byte(initial))...)),
+	}))...)
+}
+
+func greaterOrEqualFilterPacket(attr, value string) []byte {
+	return append([]byte{0xa5}, appendLength(bytesJoin([][]byte{
+		berOctetString(attr),
+		berOctetString(value),
+	}))...)
+}
+
+func lessOrEqualFilterPacket(attr, value string) []byte {
+	return append([]byte{0xa6}, appendLength(bytesJoin([][]byte{
+		berOctetString(attr),
+		berOctetString(value),
+	}))...)
+}
+
+func approxMatchFilterPacket(attr, value string) []byte {
+	return append([]byte{0xa8}, appendLength(bytesJoin([][]byte{
+		berOctetString(attr),
+		berOctetString(value),
+	}))...)
+}
+
+func mutationOperationPacket(messageID, appTag int) []byte {
+	return berMessage(messageID, berApplication(appTag, nil))
+}
+
 func writeLDAP(t *testing.T, conn net.Conn, message []byte) {
 	t.Helper()
 	if _, err := conn.Write(message); err != nil {
@@ -499,4 +800,30 @@ func containsAttribute(entry packet, wanted string) bool {
 
 func entryHasDN(entry packet, dn string) bool {
 	return len(entry.children) > 0 && entry.children[0].str() == dn
+}
+
+func attributeValues(entry packet, wanted string) []string {
+	for _, attribute := range entry.children[1].children {
+		if len(attribute.children) < 2 || attribute.children[0].str() != wanted {
+			continue
+		}
+		var values []string
+		for _, value := range attribute.children[1].children {
+			values = append(values, value.str())
+		}
+		return values
+	}
+	return nil
+}
+
+func entryAttributeCount(entry packet) int {
+	return len(entry.children[1].children)
+}
+
+func bindAs(t *testing.T, conn net.Conn, reader *bufio.Reader, messageID int, dn, password string) {
+	t.Helper()
+	writeLDAP(t, conn, bindRequest(messageID, dn, password))
+	if code := ldapResultCode(t, readLDAPPacket(t, reader)); code != resultSuccess {
+		t.Fatalf("bind result = %d; want success", code)
+	}
 }

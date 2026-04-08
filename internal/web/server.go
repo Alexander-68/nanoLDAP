@@ -70,14 +70,12 @@ func New(cfg config.Config, settings *directory.Settings, dataStore *store.Store
 }
 
 func (s *Server) PublicMux() http.Handler {
-	return s.buildMux(false)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /ca.crt", s.handleCACert)
+	return s.withHeaders(false, mux)
 }
 
 func (s *Server) SecureMux() http.Handler {
-	return s.buildMux(true)
-}
-
-func (s *Server) buildMux(secure bool) http.Handler {
 	mux := http.NewServeMux()
 	assetFiles, err := fs.Sub(assetsFS, "assets")
 	if err != nil {
@@ -101,7 +99,7 @@ func (s *Server) buildMux(secure bool) http.Handler {
 	mux.HandleFunc("PUT /groups/{id}", s.withAdminAuth(s.handleUpdateGroup))
 	mux.HandleFunc("DELETE /groups/{id}", s.withAdminAuth(s.handleDeleteGroup))
 	mux.HandleFunc("PUT /settings/base-dn", s.withAdminAuth(s.handleUpdateBaseDN))
-	return s.withHeaders(secure, mux)
+	return s.withHeaders(true, mux)
 }
 
 func (s *Server) handleCACert(w http.ResponseWriter, _ *http.Request) {
@@ -297,15 +295,21 @@ func (s *Server) handleUpdateBaseDN(w http.ResponseWriter, r *http.Request, curr
 		http.Error(w, "invalid form submission", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.SetBaseDN(r.Context(), r.Form.Get("base_dn")); err != nil {
-		s.renderPanelForView(w, r, currentUser, r.Form.Get("view"), err.Error(), http.StatusBadRequest)
+	view := r.Form.Get("view")
+	normalized, err := directory.NormalizeBaseDN(r.Form.Get("base_dn"))
+	if err != nil {
+		s.renderPanelForView(w, r, currentUser, view, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.settings.SetBaseDN(r.Form.Get("base_dn")); err != nil {
-		s.renderPanelForView(w, r, currentUser, r.Form.Get("view"), err.Error(), http.StatusBadRequest)
+	if err := s.store.SetBaseDN(r.Context(), normalized); err != nil {
+		s.renderPanelForView(w, r, currentUser, view, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.renderPanelForView(w, r, currentUser, r.Form.Get("view"), "", http.StatusOK)
+	if err := s.settings.SetBaseDN(normalized); err != nil {
+		s.renderPanelForView(w, r, currentUser, view, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.renderPanelForView(w, r, currentUser, view, "", http.StatusOK)
 }
 
 func (s *Server) renderUsersPanel(w http.ResponseWriter, r *http.Request, currentUser store.User, status int) {

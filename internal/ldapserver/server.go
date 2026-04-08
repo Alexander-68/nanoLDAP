@@ -203,12 +203,12 @@ func (s *Server) handleMessage(ctx context.Context, state *connState, msg ldapMe
 
 func (s *Server) handleBind(ctx context.Context, state *connState, msg ldapMessage) ([]byte, bool) {
 	baseDN := s.settings.BaseDN()
+	if state.hadSuccessfulBind {
+		return berMessage(msg.id, resultPacket(1, resultUnwillingToPerform, "", "only one successful bind is allowed per connection")), false
+	}
 	if !s.bindLimiter.Allow(state.sourceIP) {
 		s.audit.LDAPBind(state.sourceIP, "", "rate_limited")
 		return berMessage(msg.id, resultPacket(1, resultBusy, "", "bind rate limit exceeded")), true
-	}
-	if state.hadSuccessfulBind {
-		return berMessage(msg.id, resultPacket(1, resultUnwillingToPerform, "", "only one successful bind is allowed per connection")), false
 	}
 	if err := expectChildren(msg.op, 3); err != nil {
 		return berMessage(msg.id, resultPacket(1, resultProtocolError, "", "invalid bind request")), false
@@ -297,6 +297,9 @@ func parseSearchRequest(pkt packet) (searchRequest, error) {
 	scope, err := pkt.children[1].int()
 	if err != nil {
 		return searchRequest{}, err
+	}
+	if scope != scopeBaseObject && scope != scopeSingle && scope != scopeSubtree {
+		return searchRequest{}, fmt.Errorf("invalid search scope %d", scope)
 	}
 	filter, err := parseFilter(pkt.children[6])
 	if err != nil {
@@ -510,9 +513,22 @@ func baseEntry(baseDN string) directoryEntry {
 		dn: baseDN,
 		attrs: map[string][]string{
 			"objectclass": {"top", "domain"},
-			"dc":          {strings.Split(strings.TrimPrefix(strings.ToLower(baseDN), "dc="), ",")[0]},
+			"dc":          dcComponents(baseDN),
 		},
 	}
+}
+
+func dcComponents(baseDN string) []string {
+	parts := strings.Split(baseDN, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		attr, value, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(attr), "dc") {
+			continue
+		}
+		values = append(values, strings.TrimSpace(value))
+	}
+	return values
 }
 
 func containerEntry(ou, baseDN string) directoryEntry {

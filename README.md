@@ -6,7 +6,7 @@ NanoLDAP is a minimal, self-contained LDAP/LDAPS server with an embedded HTTP/HT
 
 - Read-only LDAP and LDAPS listeners with anonymous Root DSE access, simple bind, scoped search, mutation rejection, per-IP bind throttling, per-connection search throttling, idle connection expiry, and a global concurrent connection cap. Root DSE searches return `namingContexts` for all-attribute requests including `*`, `ALL`, and `*` with `+`, and anonymous empty-base subtree searches are accepted as a compatibility alias for Root DSE lookups.
 - Optional `--ldap-debug` protocol tracing logs each parsed LDAP request and the server's encoded LDAP responses to the process log for troubleshooting, while redacting simple-bind passwords.
-- HTTP and HTTPS administration UI built with `net/http`, `html/template`, bundled `htmx.min.js`, and locally served CSS. Users and groups are managed through compact modal dialogs, row-click editing, a single-row header, and an admin-editable Base DN control. Any listener whose port is explicitly configured is considered valid for direct use.
+- HTTPS administration UI built with `net/http`, `html/template`, bundled `htmx.min.js`, and locally served CSS. Users and groups are managed through compact modal dialogs, row-click editing, a single-row header, and an admin-editable Base DN control. The HTTP listener is restricted to the public `GET /ca.crt` certificate distribution endpoint so credentials and session cookies are never sent in clear text.
 - Argon2id password hashing in PHC format, secure in-memory sessions with `Secure`, `HttpOnly`, `SameSite=Strict` cookies, a global 3-session limit, 15-minute idle expiry, and per-user session revocation.
 - SQLite-backed user/group CRUD with default first-run provisioning for `admins`, `mvradmins`, `users`, and `guests` plus `admin`, `mvradmin`, `user`, and `guest` seed accounts. The effective Base DN is persisted in SQLite so web UI changes survive restarts.
 - Audit logging for web login attempts and LDAP bind attempts to either `stdout` or a file, while routine HTTPS client certificate rejection handshake noise is suppressed from the embedded web server log.
@@ -21,7 +21,7 @@ go build ./cmd/nanoldap
 
 All listeners are opt-in. A port must be explicitly provided to enable that listener.
 
-If `--http-port` is specified, the admin UI is served over HTTP on that port. If `--https-port` is specified, the same UI is also served over HTTPS on that port.
+If `--http-port` is specified, only the public `GET /ca.crt` certificate distribution endpoint is served over HTTP on that port. The administration UI is only served over HTTPS via `--https-port`.
 
 Unix-like shells:
 

@@ -299,9 +299,9 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, input UserInput) (User
 			return User{}, err
 		}
 	}
-	displayName := displayOrUsername(input.DisplayName, current.Username)
-	if strings.TrimSpace(input.DisplayName) == "" {
-		displayName = current.DisplayName
+	displayName := current.DisplayName
+	if trimmed := strings.TrimSpace(input.DisplayName); trimmed != "" {
+		displayName = trimmed
 	}
 	_, err = tx.ExecContext(ctx,
 		`UPDATE users SET display_name = ?, password_hash = ?, disabled = ?, updated_at = ? WHERE id = ?`,
