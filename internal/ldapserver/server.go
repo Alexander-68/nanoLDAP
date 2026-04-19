@@ -83,10 +83,11 @@ type rateCounter struct {
 }
 
 type windowLimiter struct {
-	mu      sync.Mutex
-	window  time.Duration
-	limit   int
-	entries map[string][]time.Time
+	mu        sync.Mutex
+	window    time.Duration
+	limit     int
+	entries   map[string][]time.Time
+	nextSweep time.Time
 }
 
 func New(cfg config.Config, settings *directory.Settings, dataStore *store.Store, auditLog *audit.Logger, debugSink io.Writer) *Server {
@@ -690,6 +691,10 @@ func (w *windowLimiter) Allow(key string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	now := time.Now()
+	if now.After(w.nextSweep) {
+		w.sweepLocked(now)
+		w.nextSweep = now.Add(w.window)
+	}
 	entries := w.entries[key][:0]
 	for _, ts := range w.entries[key] {
 		if now.Sub(ts) < w.window {
@@ -702,4 +707,22 @@ func (w *windowLimiter) Allow(key string) bool {
 	}
 	w.entries[key] = append(entries, now)
 	return true
+}
+
+// sweepLocked drops per-key buckets whose every timestamp has fallen outside
+// the rate-limit window. Without this, unique source IPs accumulate forever.
+func (w *windowLimiter) sweepLocked(now time.Time) {
+	for key, entries := range w.entries {
+		kept := entries[:0]
+		for _, ts := range entries {
+			if now.Sub(ts) < w.window {
+				kept = append(kept, ts)
+			}
+		}
+		if len(kept) == 0 {
+			delete(w.entries, key)
+			continue
+		}
+		w.entries[key] = kept
+	}
 }

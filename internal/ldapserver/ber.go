@@ -12,6 +12,11 @@ const (
 	classUniversal   = 0
 	classApplication = 1
 	classContext     = 2
+
+	// maxPacketLength bounds any single BER length prefix we accept. LDAP
+	// messages in practice are far smaller; rejecting oversized frames before
+	// allocation prevents a 4 GiB OOM from a crafted length byte sequence.
+	maxPacketLength = 4 * 1024 * 1024
 )
 
 type packet struct {
@@ -84,6 +89,9 @@ func readLength(r io.Reader) (int, error) {
 	length := 0
 	for _, b := range buf {
 		length = (length << 8) | int(b)
+	}
+	if length > maxPacketLength {
+		return 0, errors.New("LDAP message exceeds maximum permitted size")
 	}
 	return length, nil
 }

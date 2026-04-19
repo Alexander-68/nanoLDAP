@@ -60,6 +60,18 @@ Available flags:
 
 For LAN access from another PC, do not use `127.0.0.1` or `localhost` as `--bind-addr`. Use `0.0.0.0` to listen on all interfaces, or bind to the machine's LAN IP directly.
 
+## Fixed Limits
+
+The following constraints are intentionally hard-coded (see `internal/config/config.go`) and are not exposed as flags:
+
+- Web session idle timeout: 15 minutes
+- Web session global cap: 3 concurrent sessions
+- LDAP idle timeout: 5 seconds per connection
+- LDAP bind rate limit: 3 attempts per 10 seconds per source IP
+- LDAP search rate limit: 50 searches per second per connection
+- LDAP concurrent connection cap: 16
+- LDAP message size cap: 4 MiB per inbound frame (DoS guard on BER length prefix)
+
 ## Default Accounts
 
 - `admin` / `admin` in `admins`

@@ -10,17 +10,17 @@ The primary design philosophy is **zero-dependency deployment**: a single static
 
 * **Language:** Go 1.26  
 * **Database Engine:** modernc.org/sqlite (CGO-free SQLite implementation)  
-* **LDAP Engine:** Custom read-only handler based on a stripped-down [https://github.com/vjeantet/ldapserver](https://github.com/vjeantet/ldapserver) (supporting only Simple Bind and Search operations).  
+* **LDAP Engine:** Hand-rolled read-only handler with an in-tree BER codec, supporting only Simple Bind and Search operations. Incoming messages are size-capped before allocation to prevent crafted length prefixes from exhausting memory.  
 * **Web Framework:** Go standard library net/http (leveraging Go 1.22+ wildcard/method routing) and html/template.  
 * **Frontend:** Locally served htmx.min.js and Tailwind CSS, bundled via //go:embed.  
-* **Cryptography & Auth:** golang.org/x/crypto/argon2 for password hashing, crypto/x509, crypto/ed25519, & crypto/ecdsa for automatic TLS certificate generation.
+* **Cryptography & Auth:** golang.org/x/crypto/argon2 for password hashing, crypto/x509 and crypto/ed25519 for automatic TLS certificate generation.
 
 ## **3\. Security Model**
 
 ### **3.1. Transport Layer Security (TLS) & Certificate Distribution**
 
 * The system enforces encrypted communication. On startup, the binary checks for cert.pem and key.pem in the working directory.  
-* If absent, a routine automatically generates a modern **Ed25519** (or ECDSA P-256) self-signed x509 certificate valid for 10 years.  
+* If absent, a routine automatically generates a modern **Ed25519** self-signed x509 certificate valid for 10 years.  
 * This certificate is shared by both the LDAPS listener and the HTTPS Web UI listener (if those services are activated).  
 * **CA Distribution:** The web server exposes a public endpoint (GET /ca.crt) allowing clients to easily download the server's public certificate (e.g., via wget \--no-check-certificate https://\<server\>/ca.crt) to add to their local trust stores.  
 * The Web UI enforces HTTP Strict Transport Security (HSTS) headers.

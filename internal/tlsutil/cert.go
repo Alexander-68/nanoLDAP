@@ -1,8 +1,7 @@
 package tlsutil
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -26,7 +25,7 @@ func EnsurePair(certFile, keyFile string) ([]byte, tls.Certificate, error) {
 		}
 	}
 
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, tls.Certificate{}, err
 	}
@@ -52,7 +51,7 @@ func EnsurePair(certFile, keyFile string) ([]byte, tls.Certificate, error) {
 		IPAddresses:           []net.IP{net.IPv4(127, 0, 0, 1), net.ParseIP("::1")},
 	}
 
-	der, err := x509.CreateCertificate(rand.Reader, template, template, privateKey.Public(), privateKey)
+	der, err := x509.CreateCertificate(rand.Reader, template, template, publicKey, privateKey)
 	if err != nil {
 		return nil, tls.Certificate{}, err
 	}

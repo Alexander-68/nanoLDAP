@@ -578,6 +578,44 @@ func TestConnectionLimitDropsExcessConnections(t *testing.T) {
 	}
 }
 
+func TestWindowLimiterDropsStaleBuckets(t *testing.T) {
+	w := &windowLimiter{
+		window:  100 * time.Millisecond,
+		limit:   3,
+		entries: make(map[string][]time.Time),
+	}
+	now := time.Now()
+	w.entries["stale"] = []time.Time{now.Add(-time.Second)}
+	w.entries["fresh"] = []time.Time{now}
+
+	w.sweepLocked(now)
+
+	if _, ok := w.entries["stale"]; ok {
+		t.Fatalf("sweepLocked left stale bucket behind: %#v", w.entries)
+	}
+	if _, ok := w.entries["fresh"]; !ok {
+		t.Fatalf("sweepLocked dropped fresh bucket: %#v", w.entries)
+	}
+}
+
+func TestWindowLimiterSweepsOnAllow(t *testing.T) {
+	w := &windowLimiter{
+		window:  50 * time.Millisecond,
+		limit:   3,
+		entries: make(map[string][]time.Time),
+	}
+	if !w.Allow("1.1.1.1") {
+		t.Fatalf("first Allow() should succeed")
+	}
+	time.Sleep(80 * time.Millisecond)
+	if !w.Allow("2.2.2.2") {
+		t.Fatalf("Allow() for new key should succeed")
+	}
+	if _, ok := w.entries["1.1.1.1"]; ok {
+		t.Fatalf("stale key was not swept after window elapsed: %#v", w.entries)
+	}
+}
+
 func defaultLDAPTestConfig(t *testing.T) config.Config {
 	t.Helper()
 	return config.Config{
