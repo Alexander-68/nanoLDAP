@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="10" fill="#0f766e"/>
+  <text x="32" y="26" text-anchor="middle" textLength="54" lengthAdjust="spacingAndGlyphs"
+        font-family="'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace"
+        font-weight="500" font-size="20" fill="#fafaf9" letter-spacing="0">nano</text>
+  <text x="32" y="58" text-anchor="middle" textLength="54" lengthAdjust="spacingAndGlyphs"
+        font-family="'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace"
+        font-weight="700" font-size="32" fill="#fafaf9" letter-spacing="0">LDAP</text>
+</svg>
