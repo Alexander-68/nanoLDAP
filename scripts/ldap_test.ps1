@@ -615,3 +615,5 @@ finally {
     }
     Stop-NanoLDAP -State $state
 }
+
+exit 0
