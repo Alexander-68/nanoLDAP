@@ -4,7 +4,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NanoLDAP Groups</title>
+  <title>NanoLDAP — Groups</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/assets/styles.css">
   <script src="/assets/htmx.min.js"></script>
   <script src="/assets/admin.js" defer></script>
@@ -18,46 +21,52 @@
 {{end}}
 
 {{define "groups_panel.html"}}
-<section class="card panel page-header">
-  <div class="brand-block">
-    <div class="brand">NanoLDAP</div>
-    <nav class="tabs" aria-label="Admin pages">
-      <a class="tab" href="/users">Users</a>
-      <a class="tab active" href="/groups">Groups</a>
-    </nav>
-  </div>
-  <div class="titlebar">
-    <h1>Groups</h1>
-    <button class="icon-button" type="button" data-dialog-id="group-create-modal" aria-label="Create group">+</button>
-  </div>
-  <div class="header-tools">
+<header class="topbar">
+  <div class="brand">nanoldap<span class="brand-tag">admin</span></div>
+  <nav class="tabs" aria-label="Admin sections">
+    <a class="tab" href="/users">Users</a>
+    <a class="tab active" href="/groups">Groups</a>
+  </nav>
+  <div class="topbar-user">
     <div class="meta-chip">
       <span class="meta-label">Base DN</span>
       <code>{{.BaseDN}}</code>
-      <button class="button secondary slim" type="button" data-dialog-id="base-dn-modal">Edit</button>
+      <button class="button ghost slim" type="button" data-dialog-id="base-dn-modal">Edit</button>
     </div>
+    <span class="who">{{.CurrentUser.Username}}</span>
+    <button class="button ghost slim kbd-trigger" type="button" data-dialog-id="keyboard-help-modal" aria-label="Keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
     <form method="post" action="/logout">
-      <button class="button secondary slim" type="submit">Logout {{.CurrentUser.Username}}</button>
+      <button class="button ghost slim" type="submit">Logout {{.CurrentUser.Username}}</button>
     </form>
+  </div>
+</header>
+
+<section class="page-header">
+  <div class="page-title">
+    <span class="page-eyebrow">Directory</span>
+    <h1>Groups <span class="count">{{len .Groups}}</span></h1>
+  </div>
+  <div class="page-meta">
+    <button class="button button-plus" type="button" data-dialog-id="group-create-modal">New group</button>
   </div>
 </section>
 
 {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
 
-<section class="card panel table-card">
+<section class="data-table">
   <table class="table">
     <thead>
       <tr>
-        <th>Name</th>
-        <th>Description</th>
+        <th data-sort-key="name" tabindex="0" aria-sort="none" style="width: 22%">Name</th>
+        <th data-sort-key="description" tabindex="0" aria-sort="none" style="width: 32%">Description</th>
         <th>Members</th>
       </tr>
     </thead>
     <tbody>
       {{range .Groups}}
       <tr class="interactive-row" tabindex="0" data-dialog-id="group-edit-modal-{{.ID}}">
-        <td><code>{{.Name}}</code></td>
-        <td>{{if .Description}}{{.Description}}{{else}}<span class="small">No description</span>{{end}}</td>
+        <td data-col="name"><code>{{.Name}}</code></td>
+        <td data-col="description">{{if .Description}}{{.Description}}{{else}}<span class="small">—</span>{{end}}</td>
         <td>
           <div class="member-cell">
             <span class="count-badge">{{len .MemberUIDs}}</span>
@@ -71,7 +80,7 @@
       </tr>
       {{else}}
       <tr>
-        <td colspan="3" class="empty-state">No groups found.</td>
+        <td colspan="3" class="empty-state">No groups yet. Create one to get started.</td>
       </tr>
       {{end}}
     </tbody>
@@ -79,9 +88,10 @@
 </section>
 
 <dialog class="modal" id="group-create-modal">
-  <form class="stack" hx-post="/groups" hx-target="#groups-panel" hx-swap="innerHTML">
+  <form hx-post="/groups" hx-target="#groups-panel" hx-swap="innerHTML">
     <div class="modal-header">
-      <h2>Create Group</h2>
+      <h2>New group</h2>
+      <span class="modal-eyebrow">Create</span>
     </div>
     <div class="grid-2 compact-grid">
       <label>Name
@@ -93,16 +103,17 @@
     </div>
     <div class="modal-actions">
       <button type="button" class="button secondary" data-close-dialog>Cancel</button>
-      <button type="submit">OK</button>
+      <button type="submit">Create group</button>
     </div>
   </form>
 </dialog>
 
 {{range .Groups}}
 <dialog class="modal" id="group-edit-modal-{{.ID}}">
-  <form class="stack" hx-put="/groups/{{.ID}}" hx-target="#groups-panel" hx-swap="innerHTML">
+  <form hx-put="/groups/{{.ID}}" hx-target="#groups-panel" hx-swap="innerHTML">
     <div class="modal-header">
-      <h2>Edit Group</h2>
+      <h2>Edit group</h2>
+      <span class="modal-eyebrow">{{.Name}}</span>
     </div>
     <div class="grid-2 compact-grid">
       <label>Name
@@ -116,29 +127,76 @@
       <textarea rows="3" readonly>{{if .MemberUIDs}}{{join .MemberUIDs ", "}}{{else}}No members{{end}}</textarea>
     </label>
     <div class="modal-actions split-actions">
-      <button class="button danger" hx-delete="/groups/{{.ID}}" hx-target="#groups-panel" hx-swap="innerHTML" hx-confirm="Delete group {{.Name}}?" type="button">Delete</button>
+      <button class="button danger" hx-delete="/groups/{{.ID}}" hx-target="#groups-panel" hx-swap="innerHTML" hx-confirm="Delete group {{.Name}}?" type="button">Delete group</button>
       <div class="action-pair">
         <button type="button" class="button secondary" data-close-dialog>Cancel</button>
-        <button type="submit">OK</button>
+        <button type="submit">Save changes</button>
       </div>
     </div>
   </form>
 </dialog>
 {{end}}
 
-<dialog class="modal" id="base-dn-modal">
-  <form class="stack" hx-put="/settings/base-dn" hx-target="#groups-panel" hx-swap="innerHTML">
+<dialog class="modal" id="keyboard-help-modal">
+  <form method="dialog">
     <div class="modal-header">
-      <h2>Edit Base DN</h2>
+      <h2>Keyboard shortcuts</h2>
+      <span class="modal-eyebrow">Help</span>
+    </div>
+    <dl class="shortcuts">
+      <div class="shortcut-row">
+        <dt><kbd>&uarr;</kbd><kbd>&darr;</kbd></dt>
+        <dd>Select previous / next row</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>Home</kbd><span class="shortcut-sep">/</span><kbd>End</kbd></dt>
+        <dd>Jump to first / last row</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>Enter</kbd><span class="shortcut-sep">/</span><kbd>Space</kbd></dt>
+        <dd>Edit the selected row</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>+</kbd><span class="shortcut-sep">or</span><kbd>N</kbd></dt>
+        <dd>New user / group</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>1</kbd><span class="shortcut-sep">/</span><kbd>2</kbd></dt>
+        <dd>Switch to Users / Groups</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>G</kbd></dt>
+        <dd>Edit Base DN</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>Esc</kbd></dt>
+        <dd>Close dialog</dd>
+      </div>
+      <div class="shortcut-row">
+        <dt><kbd>?</kbd></dt>
+        <dd>Show this help</dd>
+      </div>
+    </dl>
+    <div class="modal-actions">
+      <button type="submit" class="button secondary">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog class="modal" id="base-dn-modal">
+  <form hx-put="/settings/base-dn" hx-target="#groups-panel" hx-swap="innerHTML">
+    <div class="modal-header">
+      <h2>Edit base DN</h2>
+      <span class="modal-eyebrow">Directory</span>
     </div>
     <input type="hidden" name="view" value="{{.View}}">
     <label>Base DN
       <input name="base_dn" value="{{.BaseDN}}" required>
     </label>
-    <p class="small">Use domain components such as <code>dc=example,dc=com</code>.</p>
+    <p class="field-hint">Use domain components such as <code>dc=example,dc=com</code>.</p>
     <div class="modal-actions">
       <button type="button" class="button secondary" data-close-dialog>Cancel</button>
-      <button type="submit">OK</button>
+      <button type="submit">Save</button>
     </div>
   </form>
 </dialog>

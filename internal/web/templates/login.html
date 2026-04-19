@@ -4,28 +4,29 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NanoLDAP Login</title>
+  <title>NanoLDAP — Sign in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&family=JetBrains+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="/assets/styles.css">
 </head>
 <body>
-  <main class="shell">
-    <section class="card panel hero stack">
-      <div>
-        <div class="brand">NanoLDAP</div>
-        <h1>Administrative Login</h1>
-        <p class="small">The web UI is restricted to members of the <code>admins</code> group.</p>
-      </div>
+  <main class="login-shell">
+    <section class="login-card">
+      <div class="login-brand">nanoldap<span class="brand-tag">admin</span></div>
+      <h1>Sign in</h1>
+      <p class="lede">The web console is restricted to members of the <code>admins</code> group.</p>
       {{if .Error}}<div class="message">{{.Error}}</div>{{end}}
-      <form class="stack" method="post" action="/login">
+      <form method="post" action="/login">
         <label>Username
-          <input name="username" autocomplete="username" required>
+          <input name="username" autocomplete="username" autofocus required>
         </label>
         <label>Password
           <input type="password" name="password" autocomplete="current-password" required>
         </label>
-        <button type="submit">Sign In</button>
+        <button type="submit">Sign in</button>
       </form>
-      <p class="small">Download the current self-signed certificate at <a href="/ca.crt">/ca.crt</a>.</p>
+      <p class="login-footnote">Download the self-signed certificate at <a href="/ca.crt"><code>/ca.crt</code></a>.</p>
     </section>
   </main>
 </body>

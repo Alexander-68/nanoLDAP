@@ -89,9 +89,46 @@ The web UI only allows members of `admins` to sign in. LDAP full-directory searc
 - `GET /groups`, `POST /groups`, `PUT /groups/{id}`, `DELETE /groups/{id}`
 - `PUT /settings/base-dn`
 
-The `Users` and `Groups` pages use compact modal dialogs for create and edit actions. Clicking a row opens the edit modal for that record, and the `+` button in the page title opens the create modal.
+The `Users` and `Groups` pages use compact modal dialogs for create and edit actions. Clicking (or tapping) a row opens the edit modal for that record, and the `New user` / `New group` button in the page header opens the create modal.
 
-Admins can update the effective Base DN from the web header on either page. NanoLDAP validates this value as a domain-style DN such as `dc=example,dc=com`, persists it in SQLite, and applies it immediately to the web UI and LDAP/LDAPS directory layout. The `--base-dn` flag seeds the initial value for a new database.
+Admins can update the effective Base DN from the top navigation bar on either page. NanoLDAP validates this value as a domain-style DN such as `dc=example,dc=com`, persists it in SQLite, and applies it immediately to the web UI and LDAP/LDAPS directory layout. The `--base-dn` flag seeds the initial value for a new database.
+
+### Sorting and Search
+
+Tables on both pages support client-side sorting by clicking or tapping a column header. The arrow next to the header shows the active sort direction; each click toggles ascending ↔ descending. Sort is keyboard-accessible: `Tab` to a header, then `Enter` or `Space` to toggle. Sorting uses a locale-aware, case-insensitive, natural-number comparison (`user2` sorts before `user10`).
+
+- `Users`: sortable by `Username`, `Display name`, `Groups`, `Status`.
+- `Groups`: sortable by `Name` and `Description`.
+
+The `Users` page also has a search field above the table. Typing filters rows whose `username` or `display name` contains the entered substring (case-insensitive). While the search field is focused, `↓` jumps into the first matching row and `Esc` clears the filter. The shortcut `/` focuses the search field from anywhere on the page.
+
+Both sorting and search are applied purely on the DOM of the currently loaded rows. After a create, edit, or delete, the panel is re-rendered by htmx and the view returns to the server-side default order with no active filter.
+
+### Keyboard Shortcuts
+
+The Users and Groups pages accept keyboard-only navigation. Shortcuts are suppressed while typing in an input and while any dialog is open. Press `?` to open an in-app help overlay.
+
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Select previous / next row |
+| `Home` / `End` | Jump to first / last row |
+| `Enter` / `Space` | Edit the selected row, or toggle sort when a column header is focused |
+| `+` or `N` | New user (on `/users`) or new group (on `/groups`) |
+| `/` | Focus the search field (Users page); inside the search field `↓` enters the result list and `Esc` clears the query |
+| `1` / `2` | Switch to Users / Groups |
+| `G` | Edit Base DN |
+| `Esc` | Close the active dialog |
+| `?` | Show the keyboard shortcuts overlay |
+
+### Touch Support
+
+The UI adapts to touch and coarse pointers via `@media (pointer: coarse)`:
+
+- Interactive targets (buttons, tabs, checkbox chips, table rows) expand to meet a 40–44 px minimum tap size.
+- Form inputs render at 16 px to prevent iOS auto-zoom on focus.
+- Modals cap at 90 % of viewport height with an inner scroll region (`overscroll-behavior: contain`) so long group lists stay reachable.
+- Row hover highlights are suppressed on touch; only the `:active` tap flash remains, avoiding stuck hover state after a tap.
+- The on-screen `?` shortcut hint hides on coarse-pointer devices since no keyboard is attached.
 
 ## LDAP Layout
 
